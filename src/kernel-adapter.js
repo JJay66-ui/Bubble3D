@@ -3,8 +3,8 @@
 const CANDIDATES = [
   // 1. Self-hosted copy in the repo's /dist folder (most reliable on GitHub Pages).
 {
-  js: new URL("../vendor/occt-wasm/index.js", import.meta.url).href,
-  wasm: new URL("../vendor/occt-wasm/occt-wasm.wasm", import.meta.url).href
+  js: new URL("../vendor/occt-wasm/dist/index.js", import.meta.url).href,
+  wasm: new URL("../vendor/occt-wasm/dist/occt-wasm.wasm", import.meta.url).href
 },
   // 2. CDN fallback, pinned to the version you downloaded.
   {

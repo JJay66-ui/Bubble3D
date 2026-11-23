@@ -1,1 +1,64 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Bubble 3D Modeler</title>
+    <link rel="stylesheet" href="src/style.css" />
+  </head>
+  <body>
+    <div id="view"></div>
+    <div id="bar"></div>
+    <div id="topbar"></div>
+    <div id="hint">Pick a tool on the left</div>
+    <div id="measure"></div>
+    <div id="actions">
+      <h4 id="actname">Shape</h4>
+      <button data-act="size">Size</button>
+      <button data-act="move">Move</button>
+      <button data-act="rotate">Rotate</button>
+      <button data-act="chamfer">Chamfer</button>
+      <button data-act="fillet">Fillet</button>
+      <button data-act="split">Split</button>
+      <button data-act="cut">Cut with another shape</button>
+      <button data-act="rename">Rename</button>
+      <button data-act="hide">Hide</button>
+      <button data-act="delete" class="danger">Delete</button>
+    </div>
+    <div id="objs">
+      <div class="head"><span>Objects</span><button id="showall">Show all</button></div>
+      <div id="objlist"></div>
+    </div>
+    <div id="linepanel">
+      <h4>Line length</h4>
+      <div class="row">
+        <input id="ll" type="number" step="any" />
+        <select id="lu">
+          <option value="0">mm</option>
+          <option value="1" selected>cm</option>
+          <option value="2">in</option>
+        </select>
+      </div>
+      <div style="color:#9aa4b5;font-size:11px">Changes as you type</div>
+      <div id="cons">
+        <button id="cHoriz">Make horizontal</button>
+        <button id="cVert">Make vertical</button>
+        <button id="cEqual">Equal length to next line you tap</button>
+        <button id="cLock">Lock length</button>
+        <button id="cSnap">Snap new lines straight</button>
+      </div>
+    </div>
+    <div id="panel">
+      <h4>Exact size (<span id="pu">mm</span>)</h4>
+      <label>Width <input id="fw" type="number" step="any" /></label>
+      <label>Depth <input id="fd" type="number" step="any" /></label>
+      <label>Height <input id="fh" type="number" step="any" /></label>
+      <div style="color:#9aa4b5;font-size:11px;margin-top:6px">Changes as you type</div>
+    </div>
+    <input type="file" id="file" accept=".stl" />
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="src/app.js" defer></script>
+    <script type="module" src="src/kernel-adapter.js"></script>
+  </body>
+</html>

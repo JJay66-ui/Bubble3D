@@ -60,6 +60,10 @@
         emap.get(ek).push(t);
       }
     }
+    // Make every normal point outward, whichever way the mesh was wound
+    let vol = 0;
+    tris.forEach((t) => (vol += t.v[0].dot(new THREE.Vector3().crossVectors(t.v[1], t.v[2]))));
+    if (vol < 0) tris.forEach((t) => t.n.negate());
     // Faces: flood-fill across shared edges while the surface stays flat-ish
     const faces = [];
     tris.forEach((t0, s) => {
@@ -263,6 +267,7 @@
   function changed() {
     rebuild();
     renderPanel();
+    window.dispatchEvent(new Event("cadselchange"));
   }
   function clearSel() {
     selFaces = [];
@@ -689,6 +694,10 @@
       });
     }
   });
+
+  window.cadTopo = topo;
+  window.cadSelFaces = () => selFaces;
+  window.cadFaceExtrude = (d) => faceExtrude(d);
 
   // ---------- Keep highlights in sync ----------
   (function frame() {

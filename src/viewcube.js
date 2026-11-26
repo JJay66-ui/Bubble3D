@@ -270,8 +270,10 @@
   }
   function sheetFromPoly(pts, A, B, axis, d, sign) {
     const T = 0.02;
-    const shp = new THREE.Shape(pts.map((p) => new THREE.Vector2(p[A], p[B])));
-    const g = new THREE.ExtrudeGeometry(shp, { depth: T, bevelEnabled: false }).toNonIndexed();
+    const pp = cadPrismPositions(pts.map((p) => [p[A], p[B]]), T);
+    if (!pp) throw new Error("the outline needs at least 3 different corners");
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pp, 3));
     const pos = g.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const u = pos.getX(i),

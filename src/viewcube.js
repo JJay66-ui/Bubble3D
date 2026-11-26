@@ -368,10 +368,25 @@
     clearPrev();
     hideMeasure();
   }
+  function circlePts(a, p) {
+    const [A, B] = others(view.axis),
+      r = Math.hypot(p[A] - a[A], p[B] - a[B]),
+      out = [];
+    for (let i = 0; i < 48; i++) {
+      const t = (i / 48) * Math.PI * 2,
+        q = new THREE.Vector3();
+      q[A] = a[A] + Math.cos(t) * r;
+      q[B] = a[B] + Math.sin(t) * r;
+      q[view.axis] = a[view.axis];
+      out.push(q);
+    }
+    return out;
+  }
   function showPrev(a, p) {
     clearPrev();
     const mat = new THREE.LineBasicMaterial({ color: 0x2f8cff, depthTest: false });
     if (sk.tool === "line") prev = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, p]), mat);
+    else if (sk.tool === "circle") prev = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(circlePts(a, p)), mat);
     else prev = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(corners(a, p)), mat);
     prev.renderOrder = 6;
     scene.add(prev);
@@ -392,11 +407,6 @@
       setRay(e);
       const hit = raycaster.intersectObjects(shapes.filter((s) => s.visible !== false), false)[0];
       if (view.name === "Top" && !hit) return; // drawing on the ground stays as before
-      if (tool === "circle") {
-        hint.textContent = "Circles on a surface aren't available yet. Use Line or Square here.";
-        e.stopImmediatePropagation();
-        return;
-      }
       if (lock && (lock.name !== view.name || tool !== lock.tool)) lock = null;
       const d = lock ? lock.d : hit ? r3(hit.point[view.axis]) : nearestDepth();
       lock = { name: view.name, d, tool };
@@ -416,6 +426,7 @@
       if (p) {
         showPrev(sk.a, p);
         if (sk.tool === "line") showMeasure("Length: " + fmt(sk.a.distanceTo(p)));
+        else if (sk.tool === "circle") showMeasure("Radius: " + fmt(sk.a.distanceTo(p)));
         else {
           const c = corners(sk.a, p);
           showMeasure("Width: " + fmt(c[0].distanceTo(c[1])) + "   Height: " + fmt(c[1].distanceTo(c[2])));
@@ -432,6 +443,24 @@
     cancelSketch();
     e.stopImmediatePropagation();
     if (!p) return;
+    if (s.tool === "circle") {
+      if (s.a.distanceTo(p) < 0.1) return;
+      const [A, B] = others(view.axis);
+      const sheet = sheetFromPoly(circlePts(s.a, p), A, B, view.axis, s.d, view.sign);
+      perform({
+        redo() {
+          addToScene(sheet);
+        },
+        undo() {
+          removeFromScene(sheet);
+        }
+      });
+      lock = null;
+      chooseTool("select");
+      hint.textContent = "Circle made. Use Extrude out or Extrude other way at the bottom right.";
+      selectSheet(sheet);
+      return;
+    }
     let segs = [];
     if (s.tool === "line") {
       if (s.a.distanceTo(p) > 0.1) segs = [[s.a, p]];

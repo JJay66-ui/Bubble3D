@@ -51,6 +51,93 @@
     }
     return r;
   }
+  // Builds a straight-sided solid from a polygon. Tries several OCCT routes and checks the
+  // volume of each result, so one wrong guess about the API doesn't stop the feature.
+  function prismFromPoints(k, pts, H) {
+    const P = pts.map((a) => [a[0], -a[1]]); // app (x, z) -> OCCT (x, y)
+    const n = P.length;
+    let area = 0;
+    for (let i = 0; i < n; i++) {
+      const a = P[i],
+        b = P[(i + 1) % n];
+      area += a[0] * b[1] - b[0] * a[1];
+    }
+    const want = (Math.abs(area) / 2) * H;
+    const has = (name) => typeof k[name] === "function";
+    const good = (s) => {
+      if (s === undefined || s === null) return false;
+      if (!has("getVolume")) return true;
+      const v = Math.abs(k.getVolume(s));
+      return v > 0 && Math.abs(v - want) / want < 0.02;
+    };
+    const tries = [
+      [
+        "lines",
+        () => {
+          const e = P.map((a, i) => {
+            const b = P[(i + 1) % n];
+            return k.makeLineEdge(a[0], a[1], 0, b[0], b[1], 0);
+          });
+          return k.extrude(k.makeFace(k.makeWire(e)), 0, 0, H);
+        }
+      ],
+      [
+        "vertices",
+        () => {
+          const v = P.map((a) => k.makeVertex(a[0], a[1], 0));
+          const e = v.map((a, i) => k.makeEdge(a, v[(i + 1) % n]));
+          return k.extrude(k.makeFace(k.makeWire(e)), 0, 0, H);
+        }
+      ],
+      [
+        "polygon",
+        () => k.extrude(k.makeFace(k.makePolygon(P.map((a) => [a[0], a[1], 0]))), 0, 0, H)
+      ],
+      [
+        "triangles",
+        () => {
+          const idx = THREE.ShapeUtils.triangulateShape(
+            P.map((a) => new THREE.Vector2(a[0], a[1])),
+            []
+          );
+          const F = [];
+          const tri = (a, b, c) =>
+            F.push(k.buildTriFace(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]));
+          idx.forEach(([i, j, l]) => {
+            const a = P[i],
+              b = P[j],
+              c = P[l];
+            tri([a[0], a[1], 0], [c[0], c[1], 0], [b[0], b[1], 0]);
+            tri([a[0], a[1], H], [b[0], b[1], H], [c[0], c[1], H]);
+          });
+          for (let i = 0; i < n; i++) {
+            const a = P[i],
+              b = P[(i + 1) % n];
+            tri([a[0], a[1], 0], [b[0], b[1], 0], [b[0], b[1], H]);
+            tri([a[0], a[1], 0], [b[0], b[1], H], [a[0], a[1], H]);
+          }
+          return has("sewAndSolidify") ? k.sewAndSolidify(F, 1e-6) : k.buildSolidFromFaces(F);
+        }
+      ]
+    ];
+    const errs = [];
+    for (const [name, fn] of tries) {
+      try {
+        const s = fn();
+        if (good(s)) return s;
+        errs.push(name + ": wrong volume");
+      } catch (e) {
+        errs.push(name + ": " + (e.message || e));
+      }
+    }
+    const names = new Set();
+    for (let o = k; o && o !== Object.prototype; o = Object.getPrototypeOf(o))
+      Object.getOwnPropertyNames(o).forEach((x) => names.add(x));
+    const m = [...names].filter((x) => /polygon|wire|face|solid|sew|extrude|prism|edge|vertex/i.test(x));
+    console.warn("Sketch solid failed", errs, "points", pts, "methods", m);
+    throw new Error("could not build sketch solid [" + errs.join("; ") + "] methods: " + m.join(", "));
+  }
+
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {
     const own =
@@ -72,16 +159,7 @@
         ox = m.position.x,
         oz = m.position.z;
       const pts = m.userData.loopPts.map((q) => [q.x * sx + ox, q.z * sz + oz]);
-      const n = pts.length;
-      const edges = step("sketch edges", () =>
-        pts.map((a, i) => {
-          const b = pts[(i + 1) % n];
-          return k.makeLineEdge(a[0], -a[1], 0, b[0], -b[1], 0);
-        })
-      );
-      const wire = step("sketch wire", () => k.makeWire(edges));
-      const face = step("sketch face", () => k.makeFace(wire));
-      return { s: step("sketch solid", () => k.extrude(face, 0, 0, H)), H };
+      return { s: prismFromPoints(k, pts, H), H };
     }
     if (m.userData.imported || p.loop)
       throw new Error("STL imports, cut results and moved filleted shapes aren't supported yet");

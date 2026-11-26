@@ -149,6 +149,73 @@
     throw new Error("could not build sketch solid [" + errs.join("; ") + "] methods: " + m.join(", "));
   }
 
+  // Is this mesh an upright prism (flat top and bottom, straight walls) sitting on the plate? Returns its outline.
+  function prismOfMesh(m) {
+    if (!window.cadTopo) return null;
+    const T = window.cadTopo(m);
+    let lo = Infinity,
+      hi = -Infinity;
+    T.tris.forEach((t) =>
+      t.v.forEach((v) => {
+        lo = Math.min(lo, v.y);
+        hi = Math.max(hi, v.y);
+      })
+    );
+    const H = hi - lo;
+    if (H < 0.05) return null;
+    if (Math.abs(lo) > 0.02) throw new Error("the shape needs to sit on the plate first");
+    const key = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.z * 1e3);
+    const edges = new Map();
+    let tops = 0;
+    for (const t of T.tris) {
+      if (t.face === -2) continue;
+      if (t.n.y > 0.999) {
+        if (Math.abs(t.v[0].y - hi) > 1e-3 || Math.abs(t.v[1].y - hi) > 1e-3 || Math.abs(t.v[2].y - hi) > 1e-3) return null;
+        tops++;
+        for (let e = 0; e < 3; e++) {
+          const a = t.v[e],
+            b = t.v[(e + 1) % 3],
+            ka = key(a),
+            kb = key(b),
+            ek = ka < kb ? ka + "|" + kb : kb + "|" + ka,
+            r = edges.get(ek);
+          if (r) r.n++;
+          else edges.set(ek, { n: 1, a, b, ka, kb });
+        }
+      } else if (t.n.y < -0.999) {
+        if (Math.abs(t.v[0].y - lo) > 1e-3 || Math.abs(t.v[1].y - lo) > 1e-3 || Math.abs(t.v[2].y - lo) > 1e-3) return null;
+      } else if (Math.abs(t.n.y) > 0.01) return null;
+    }
+    if (!tops) return null;
+    const next = new Map();
+    let count = 0;
+    edges.forEach((r) => {
+      if (r.n !== 1) return;
+      count++;
+      if (!next.has(r.ka)) next.set(r.ka, []);
+      if (!next.has(r.kb)) next.set(r.kb, []);
+      next.get(r.ka).push(r);
+      next.get(r.kb).push(r);
+    });
+    if (count < 3) return null;
+    // walk the outline
+    const first = [...edges.values()].find((r) => r.n === 1);
+    const pts = [[first.a.x, first.a.z]];
+    let cur = first.kb,
+      prev = first,
+      guard = 0;
+    while (cur !== first.ka && guard++ < count + 2) {
+      const r = next.get(cur).find((q) => q !== prev);
+      if (!r) return null;
+      const v = r.ka === cur ? r.a : r.b;
+      pts.push([v.x, v.z]);
+      cur = r.ka === cur ? r.kb : r.ka;
+      prev = r;
+    }
+    if (cur !== first.ka || pts.length < 3 || pts.length !== count) return null; // holes or several outlines: not handled
+    return { pts, H };
+  }
+
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {
     const own =
@@ -161,6 +228,11 @@
     if (own) return m.userData.occt;
     const p = m.geometry.parameters || {},
       H = Math.abs(m.userData.height);
+    if (m.userData.imported && !m.userData.loopPts) {
+      // Shapes made by sliding faces / sheets: if it is a straight upright prism, rebuild it in OCCT
+      const pr = prismOfMesh(m);
+      if (pr) return { s: prismFromPoints(k, pr.pts, pr.H), H: pr.H };
+    }
     if (m.userData.height < 0.05) throw new Error("extrude the shape first");
     if (Math.abs(m.rotation.y) > 1e-6) throw new Error("rotated shapes aren't supported yet");
     if (m.userData.loopPts) {

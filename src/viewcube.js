@@ -67,7 +67,11 @@
   const btn = document.createElement("button");
   btn.style.cssText =
     "display:block;width:100%;padding:4px 0;border:none;border-top:1px solid rgba(255,255,255,.12);background:none;color:#cfd6e3;font:11px -apple-system,sans-serif;border-radius:0 0 14px 14px";
-  wrap.append(head, cvs, btn);
+  const btn2 = document.createElement("button");
+  btn2.textContent = "Make solid from lines";
+  btn2.style.cssText = btn.style.cssText;
+  btn2.onclick = () => makeSolidFromLines();
+  wrap.append(head, cvs, btn, btn2);
   document.body.appendChild(wrap);
   makeDraggable(wrap, head);
   btn.onclick = () => setOrtho(!ortho);
@@ -75,7 +79,7 @@
   // keep the side panels out from under the cube
   ["panel", "linepanel"].forEach((id) => {
     const p = document.getElementById(id);
-    if (p) p.style.top = "170px";
+    if (p) p.style.top = "200px";
   });
 
   const mr = new THREE.WebGLRenderer({ canvas: cvs, alpha: true, antialias: true });
@@ -312,6 +316,49 @@
       if (window.cadSelectFaceToward) window.cadSelectFaceToward(m, dir);
     }, 0);
   }
+  // Turn a closed loop of lines on one plane into a solid sheet you can extrude
+  function closeWith(nl, already) {
+    let loop;
+    try {
+      loop = findLoop(nl);
+    } catch (e) {
+      toast("Close shape error: " + (e.message || e));
+      return false;
+    }
+    if (!loop || loop.pts.length < 3) return false;
+    try {
+      const sheet = sheetFromPoly(loop.pts, loop.A, loop.B, loop.P.axis, loop.P.d, loop.P.sign);
+      const gone = loop.lines.concat(already ? [nl] : []);
+      perform({
+        redo() {
+          gone.forEach(removeFromScene);
+          addToScene(sheet);
+        },
+        undo() {
+          removeFromScene(sheet);
+          gone.forEach(addToScene);
+        }
+      });
+      lock = null;
+      chooseTool("select");
+      hint.textContent = "Closed shape. Use Extrude out or Extrude other way at the bottom right.";
+      selectSheet(sheet);
+      return true;
+    } catch (e) {
+      toast("Couldn't build the solid: " + (e.message || e));
+      return false;
+    }
+  }
+  const toast = (t) => (window.cadToast ? window.cadToast(t, false) : (hint.textContent = t));
+  function makeSolidFromLines() {
+    if (!view) return toast("Pick a view on the cube first (Front, Back, Left, Right).");
+    const ls = scene.children.filter(
+      (o) => o.userData && o.userData.plane && o.userData.plane.axis === view.axis && o.userData.isLine
+    );
+    if (!ls.length) return toast("No lines drawn on this view yet.");
+    for (const l of ls) if (closeWith(l, true)) return;
+    toast("No closed shape found. End the last line on the first line's start point so the corners meet.");
+  }
   function clearPrev() {
     if (prev) {
       scene.remove(prev);
@@ -425,27 +472,7 @@
       m.add(m.userData.edges);
       made = [m];
     } else made = segs.map(([a, b]) => makeLine3D(a, b));
-    if (s.tool === "line") {
-      const loop = findLoop(made[0]);
-      if (loop && loop.pts.length >= 3) {
-        const sheet = sheetFromPoly(loop.pts, loop.A, loop.B, loop.P.axis, loop.P.d, loop.P.sign);
-        perform({
-          redo() {
-            loop.lines.forEach(removeFromScene);
-            addToScene(sheet);
-          },
-          undo() {
-            removeFromScene(sheet);
-            loop.lines.forEach(addToScene);
-          }
-        });
-        lock = null;
-        chooseTool("select");
-        hint.textContent = "Closed shape. Use Extrude out or Extrude other way at the bottom right.";
-        selectSheet(sheet);
-        return;
-      }
-    }
+    if (s.tool === "line" && closeWith(made[0], false)) return;
     perform({
       redo() {
         made.forEach(addToScene);

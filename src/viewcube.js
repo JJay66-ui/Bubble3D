@@ -44,6 +44,7 @@
     yaw = v.yaw;
     pitch = v.pitch;
     view = Object.assign({ name }, v);
+    lock = null;
     setOrtho(true);
     hint.textContent =
       name +
@@ -167,6 +168,24 @@
     });
     return best === null ? 0 : r3(best);
   }
+  let lock = null; // the surface you started sketching on stays the same for the whole shape
+  function endpointNear(q, d) {
+    const [A, B] = others(view.axis);
+    let best = null,
+      bd = 0.6;
+    scene.children.forEach((o) => {
+      const P = o.userData && o.userData.plane;
+      if (!P || P.axis !== view.axis || Math.abs(P.d - d) > 1e-3) return;
+      [o.userData.a, o.userData.b].forEach((v2) => {
+        const dd = Math.hypot(v2[A] - q[A], v2[B] - q[B]);
+        if (dd < bd) {
+          bd = dd;
+          best = v2;
+        }
+      });
+    });
+    return best;
+  }
   function planePoint(e, d) {
     setRay(e);
     const n = new THREE.Vector3();
@@ -176,7 +195,13 @@
     const [A, B] = others(view.axis);
     t[A] = Math.round(t[A] * 2) / 2;
     t[B] = Math.round(t[B] * 2) / 2;
+    if (view.axis !== "y" && t.y < 0) t.y = 0; // the plate is zero: never draw below it
     t[view.axis] = d;
+    const nb = endpointNear(t, d);
+    if (nb) {
+      t[A] = nb[A];
+      t[B] = nb[B];
+    }
     return t;
   }
   function corners(a, p) {
@@ -215,7 +240,7 @@
         o.userData.isLine &&
         o.userData.plane &&
         o.userData.plane.axis === P.axis &&
-        Math.abs(o.userData.plane.d - P.d) < 1e-6 &&
+        Math.abs(o.userData.plane.d - P.d) < 1e-3 &&
         o.parent === scene
     );
     pool.push(nl);
@@ -280,6 +305,13 @@
     m.add(m.userData.edges);
     return m;
   }
+  function selectSheet(m) {
+    setTimeout(() => {
+      const dir = new THREE.Vector3();
+      dir[view.axis] = view.sign;
+      if (window.cadSelectFaceToward) window.cadSelectFaceToward(m, dir);
+    }, 0);
+  }
   function clearPrev() {
     if (prev) {
       scene.remove(prev);
@@ -321,7 +353,9 @@
         e.stopImmediatePropagation();
         return;
       }
-      const d = hit ? r3(hit.point[view.axis]) : nearestDepth();
+      if (lock && (lock.name !== view.name || tool !== lock.tool)) lock = null;
+      const d = lock ? lock.d : hit ? r3(hit.point[view.axis]) : nearestDepth();
+      lock = { name: view.name, d, tool };
       const p = planePoint(e, d);
       if (!p) return;
       sk = { id: e.pointerId, d, a: p, tool };
@@ -405,8 +439,10 @@
             loop.lines.forEach(addToScene);
           }
         });
+        lock = null;
         chooseTool("select");
-        hint.textContent = "Closed shape. Tap its face, then Extrude.";
+        hint.textContent = "Closed shape. Use Extrude out or Extrude other way at the bottom right.";
+        selectSheet(sheet);
         return;
       }
     }
@@ -419,8 +455,10 @@
       }
     });
     if (s.tool === "rect") {
+      lock = null;
       chooseTool("select");
-      hint.textContent = "Tap the sheet's face, then Extrude.";
+      hint.textContent = "Use Extrude out or Extrude other way at the bottom right.";
+      selectSheet(made[0]);
     }
   };
   host.addEventListener("pointerup", finish(true), true);

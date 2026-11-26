@@ -487,7 +487,13 @@
       hint.textContent = "Curved faces can't be pushed or pulled yet. Tap a flat face.";
       return;
     }
-    if (Math.abs(f.n.y) > 0.95) return; // top and bottom use the up/down arrow
+    // red only for the face sitting on the plate; every other direction is green
+    let onPlate = false;
+    if (f.n.y < -0.95) {
+      const lo = new THREE.Box3().setFromObject(f.mesh).min.y;
+      onPlate = lo < 0.02;
+    }
+    fout.material.color.set(onPlate ? 0xff6b6b : 0x3ddc84);
     cur = { f, n: new THREE.Vector3(f.n.x, f.n.y, f.n.z).normalize(), c: f.c.clone() };
     farrow.position.copy(cur.c);
     farrow.quaternion.setFromUnitVectors(UPV, cur.n);

@@ -417,7 +417,7 @@
   fout.position.y = 1.65;
   const fin = new THREE.Mesh(
     new THREE.ConeGeometry(0.5, 0.9, 16),
-    new THREE.MeshBasicMaterial({ color: 0xff6b6b, depthTest: false })
+    new THREE.MeshBasicMaterial({ color: 0x3ddc84, depthTest: false })
   );
   fin.position.y = -1.65;
   fin.rotation.x = Math.PI;
@@ -594,6 +594,55 @@
           A.geometry = oldG;
           A.position.copy(oldPos);
           if (oldE) A.userData.edges.geometry = oldE;
+        }
+      });
+      return;
+    }
+    // Free-form solids: slide the whole face along its normal (the neighbouring walls stretch)
+    if (A.userData.imported && A.geometry.attributes && A.geometry.attributes.position) {
+      const T = window.cadTopo(A),
+        tgt = new Map(),
+        kk = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.y * 1e3) + "," + Math.round(v.z * 1e3);
+      f.tris.forEach((j) => T.tris[j].v.forEach((v) => tgt.set(kk(v), true)));
+      const bb0 = new THREE.Box3().setFromObject(A),
+        thick = Math.abs(bb0.getSize(new THREE.Vector3()).dot(new THREE.Vector3(Math.abs(f.n.x), Math.abs(f.n.y), Math.abs(f.n.z))));
+      if (d < 0 && thick < 0.1 && window.cadFaceExtrude) return window.cadFaceExtrude(d); // thin sheet: build the other way
+      if (d < 0 && -d >= thick - 0.01) return toast("That would push all the way through. Use a smaller distance.");
+      const pos = A.geometry.attributes.position,
+        before = pos.array.slice(),
+        after = pos.array.slice(),
+        inv = new THREE.Matrix4().copy(A.matrixWorld).invert(),
+        ln = f.n.clone().transformDirection(inv).multiplyScalar(d / (A.scale.x || 1)),
+        w = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        w.set(before[3 * i], before[3 * i + 1], before[3 * i + 2]).applyMatrix4(A.matrixWorld);
+        if (tgt.has(kk(w))) {
+          after[3 * i] += ln.x;
+          after[3 * i + 1] += ln.y;
+          after[3 * i + 2] += ln.z;
+        }
+      }
+      const e0 = A.userData.edges ? A.userData.edges.geometry : null,
+        apply = (arr, edges) => {
+          pos.array.set(arr);
+          pos.needsUpdate = true;
+          A.geometry.computeVertexNormals();
+          A.geometry.computeBoundingBox();
+          A.geometry.computeBoundingSphere();
+          if (A.userData.edges) {
+            if (edges) A.userData.edges.geometry = edges;
+            else {
+              const ng = new THREE.EdgesGeometry(A.geometry, 20);
+              A.userData.edges.geometry = ng;
+            }
+          }
+        };
+      perform({
+        redo() {
+          apply(after, null);
+        },
+        undo() {
+          apply(before, e0);
         }
       });
       return;

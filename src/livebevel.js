@@ -200,7 +200,8 @@
     requestAnimationFrame(frame);
     if (arrow.visible && selected) {
       const bb = new THREE.Box3().setFromObject(selected);
-      arrow.position.set((bb.min.x + bb.max.x) / 2, bb.max.y, (bb.min.z + bb.max.z) / 2);
+      const c = window.cadCentroid(selected);
+      arrow.position.set(c.x, bb.max.y, c.z);
       downHead.position.y = bb.min.y - bb.max.y - 0.45;
     }
     if (sess) {

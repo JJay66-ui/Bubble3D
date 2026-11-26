@@ -239,6 +239,65 @@
     };
   }
 
+  function applyOps(ops, msg, extra) {
+    const apply = (o, to) => {
+      if (o.remove) to === "after" ? removeFromScene(o.A) : addToScene(o.A);
+      else restore(o.A, o[to]);
+    };
+    perform({
+      redo() {
+        ops.forEach((o) => apply(o, "after"));
+        if (extra) extra.redo();
+      },
+      undo() {
+        if (extra) extra.undo();
+        ops.forEach((o) => apply(o, "before"));
+      }
+    });
+    toast(msg, true);
+  }
+
+  // Overlapping layers merged into clean, non-overlapping ones
+  function normalize(pc, layers) {
+    const ys = new Set();
+    layers.forEach((l) => {
+      ys.add(l.y0);
+      ys.add(l.y1);
+    });
+    const Y = [...ys].sort((a, b) => a - b),
+      out = [];
+    for (let i = 0; i < Y.length - 1; i++) {
+      const lo = Y[i],
+        hi = Y[i + 1];
+      if (hi - lo < 1e-6) continue;
+      const mid = (lo + hi) / 2;
+      const cov = layers.filter((l) => l.y0 <= mid && mid <= l.y1).map((l) => l.mp);
+      if (!cov.length) continue;
+      const mp = cov.length === 1 ? cov[0] : pc.union(...cov);
+      const key = JSON.stringify(mp),
+        p = out[out.length - 1];
+      if (p && p.key === key && Math.abs(p.y1 - lo) < 1e-9) p.y1 = hi;
+      else out.push({ mp, y0: lo, y1: hi, key });
+    }
+    return out.map(({ mp, y0, y1 }) => ({ mp, y0, y1 }));
+  }
+
+  // Should the shape you pushed in disappear after it carves?
+  let removePusher = true;
+  const tg = document.createElement("button");
+  tg.style.cssText =
+    "position:absolute;left:84px;bottom:46px;z-index:6;padding:6px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.14);color:#fff;font-size:12px;background:rgba(255,255,255,.1)";
+  const tgLabel = () =>
+    (tg.textContent = removePusher
+      ? "Carve: pushed shape disappears (tap to keep it)"
+      : "Carve: pushed shape stays (tap to make it disappear)");
+  tg.onclick = () => {
+    removePusher = !removePusher;
+    tgLabel();
+  };
+  tgLabel();
+  document.body.appendChild(tg);
+
   // ---------- Entry point: B was just extruded or resized ----------
   window.cadCarve = function (B) {
     if (!B || B.visible === false || B.userData.isLine) return;
@@ -270,21 +329,24 @@
           }
         });
         if (!ops.length) return;
-        const apply = (o, to) => {
-          if (o.remove) to === "after" ? removeFromScene(o.A) : addToScene(o.A);
-          else restore(o.A, o[to]);
-        };
-        perform({
-          redo() {
-            ops.forEach((o) => apply(o, "after"));
-          },
-          undo() {
-            ops.forEach((o) => apply(o, "before"));
-          }
-        });
-        toast(
-          "Carved " + ops.map((o) => o.A.userData.name || "object").join(", ") + " to follow the new shape",
-          true
+        // The pushed shape is used up: it disappears, leaving a clean cut (undo brings it back)
+        const extra = removePusher
+          ? {
+              redo() {
+                removeFromScene(B);
+                hideArrow();
+              },
+              undo() {
+                addToScene(B);
+              }
+            }
+          : null;
+        applyOps(
+          ops,
+          "Carved " +
+            ops.map((o) => o.A.userData.name || "object").join(", ") +
+            (removePusher ? " and removed the pushed shape" : " to follow the new shape"),
+          extra
         );
       })
       .catch((e) => toast("Carve needs the polygon-clipping library (" + (e.message || e) + ")"));
@@ -300,5 +362,188 @@
       });
   });
 
-  window.cadCarveInternals = { subtractLayers, area, layersOf };
+  // ---------- Push / pull any selected side face ----------
+  const el = renderer.domElement;
+  const UPV = new THREE.Vector3(0, 1, 0);
+  window.cadFaceArrows = true; // tells pushpull.js to hide its box-only side arrows
+
+  const shaftM = new THREE.MeshBasicMaterial({ color: 0xcfd6e3, depthTest: false });
+  const farrow = new THREE.Group();
+  const fshaft = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 2.4, 10), shaftM);
+  const fout = new THREE.Mesh(
+    new THREE.ConeGeometry(0.5, 0.9, 16),
+    new THREE.MeshBasicMaterial({ color: 0x3ddc84, depthTest: false })
+  );
+  fout.position.y = 1.65;
+  const fin = new THREE.Mesh(
+    new THREE.ConeGeometry(0.5, 0.9, 16),
+    new THREE.MeshBasicMaterial({ color: 0xff6b6b, depthTest: false })
+  );
+  fin.position.y = -1.65;
+  fin.rotation.x = Math.PI;
+  farrow.add(fshaft, fout, fin);
+  farrow.children.forEach((c) => (c.renderOrder = 21));
+  farrow.visible = false;
+  scene.add(farrow);
+
+  const r4 = (v) => Math.round(v * 1e4) / 1e4;
+  // The wall a vertical face stands on: two ends on the ground plan, plus its height range
+  function faceSeg(f, T) {
+    const hl = Math.hypot(f.n.x, f.n.z) || 1,
+      nx = f.n.x / hl,
+      nz = f.n.z / hl,
+      tx = -nz,
+      tz = nx;
+    let tmin = Infinity,
+      tmax = -Infinity,
+      y0 = Infinity,
+      y1 = -Infinity;
+    f.tris.forEach((j) =>
+      T.tris[j].v.forEach((v) => {
+        const s = (v.x - f.c.x) * tx + (v.z - f.c.z) * tz;
+        if (s < tmin) tmin = s;
+        if (s > tmax) tmax = s;
+        if (v.y < y0) y0 = v.y;
+        if (v.y > y1) y1 = v.y;
+      })
+    );
+    return {
+      P: [f.c.x + tx * tmin, f.c.z + tz * tmin],
+      Q: [f.c.x + tx * tmax, f.c.z + tz * tmax],
+      nx,
+      nz,
+      y0: r4(y0),
+      y1: r4(y1)
+    };
+  }
+  function quadRing(s, d) {
+    const a = s.P,
+      b = s.Q;
+    return [a, b, [b[0] + s.nx * d, b[1] + s.nz * d], [a[0] + s.nx * d, a[1] + s.nz * d], a];
+  }
+
+  let cur = null,
+    fdrag = null,
+    prev = null;
+  const scr = (v) => {
+    const p = v.clone().project(camera);
+    return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight };
+  };
+  function clearPreview() {
+    if (prev) {
+      scene.remove(prev);
+      prev.geometry.dispose();
+      prev = null;
+    }
+  }
+  function refreshFaceArrow() {
+    farrow.visible = false;
+    cur = null;
+    clearPreview();
+    const fs = window.cadSelFaces ? window.cadSelFaces() : [];
+    if (fs.length !== 1) return;
+    const f = fs[0];
+    if (!f.planar) {
+      hint.textContent = "Curved faces can't be pushed or pulled yet. Tap a flat face.";
+      return;
+    }
+    if (Math.abs(f.n.y) > 0.95) return; // top and bottom use the up/down arrow
+    cur = { f, n: new THREE.Vector3(f.n.x, f.n.y, f.n.z).normalize(), c: f.c.clone() };
+    farrow.position.copy(cur.c);
+    farrow.quaternion.setFromUnitVectors(UPV, cur.n);
+    farrow.visible = true;
+    hint.textContent = "Drag the green arrow out to add, or the red side in to cut.";
+  }
+  addEventListener("cadselchange", refreshFaceArrow);
+
+  function showPreview(d) {
+    clearPreview();
+    if (!cur || Math.abs(d) < 0.01 || Math.abs(cur.f.n.y) > 0.05) return;
+    const s = faceSeg(cur.f, window.cadTopo(cur.f.mesh));
+    const shape = new THREE.Shape(quadRing(s, d).slice(0, 4).map((p) => new THREE.Vector2(p[0], -p[1])));
+    const g = new THREE.ExtrudeGeometry(shape, { depth: Math.max(0.01, s.y1 - s.y0), bevelEnabled: false });
+    g.rotateX(-Math.PI / 2);
+    g.translate(0, s.y0, 0);
+    prev = new THREE.Mesh(
+      g,
+      new THREE.MeshBasicMaterial({
+        color: d > 0 ? 0x3ddc84 : 0xff6b6b,
+        transparent: true,
+        opacity: 0.45,
+        depthTest: false,
+        side: THREE.DoubleSide
+      })
+    );
+    prev.renderOrder = 19;
+    scene.add(prev);
+  }
+
+  async function commitFace(f, d) {
+    if (Math.abs(d) < 0.05) return;
+    const A = f.mesh;
+    if (Math.abs(f.n.y) < 0.05) {
+      let LA = null;
+      try {
+        LA = layersOf(A);
+      } catch (e) {}
+      if (LA) {
+        try {
+          const pc = await loadPC();
+          const s = faceSeg(f, window.cadTopo(A));
+          const cutter = [{ mp: [[quadRing(s, d)]], y0: s.y0, y1: s.y1 }];
+          const res = d > 0 ? normalize(pc, LA.concat(cutter)) : subtractLayers(pc, LA, cutter);
+          if (!res) return toast("Nothing changed");
+          applyOps([makeOp(A, res)], d > 0 ? "Pushed the face out" : "Pushed the face in", null);
+          return;
+        } catch (e) {
+          return toast("Push/pull not applied (" + (e.message || e) + ")");
+        }
+      }
+    }
+    // Other flat faces: pulling out adds a new solid on the face
+    if (d > 0 && window.cadFaceExtrude) return window.cadFaceExtrude(d);
+    toast("Pushing in works on the flat sides of boxes, sketch shapes and carved shapes");
+  }
+
+  addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!cur || e.target !== el || (e.pointerType === "mouse" && e.button !== 0)) return;
+      setRay(e);
+      if (!raycaster.intersectObjects(farrow.children, true)[0]) return;
+      const a = scr(cur.c),
+        b = scr(cur.c.clone().add(cur.n));
+      fdrag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: b.x - a.x, sy: b.y - a.y, d: 0 };
+      el.setPointerCapture(e.pointerId);
+      e.stopImmediatePropagation();
+    },
+    true
+  );
+  addEventListener(
+    "pointermove",
+    (e) => {
+      if (!fdrag || e.pointerId !== fdrag.id) return;
+      const len2 = fdrag.sx * fdrag.sx + fdrag.sy * fdrag.sy || 1;
+      const d0 = ((e.clientX - fdrag.x) * fdrag.sx + (e.clientY - fdrag.y) * fdrag.sy) / len2;
+      fdrag.d = Math.round(d0 * 4) / 4;
+      showPreview(fdrag.d);
+      showMeasure((fdrag.d >= 0 ? "Push out: " : "Push in: ") + fmt(Math.abs(fdrag.d)));
+      e.stopImmediatePropagation();
+    },
+    true
+  );
+  const endFace = (commit) => (e) => {
+    if (!fdrag || e.pointerId !== fdrag.id) return;
+    const d = fdrag.d,
+      f = cur && cur.f;
+    fdrag = null;
+    clearPreview();
+    hideMeasure();
+    e.stopImmediatePropagation();
+    if (commit && f) commitFace(f, d);
+  };
+  addEventListener("pointerup", endFace(true), true);
+  addEventListener("pointercancel", endFace(false), true);
+
+  window.cadCarveInternals = { subtractLayers, area, layersOf, normalize, faceSeg, quadRing };
 })();

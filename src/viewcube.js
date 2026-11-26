@@ -263,9 +263,8 @@
       return false;
     }
     if (!dfs(ends(nl)[1])) return null;
-    const pts = [nl.userData.a];
-    path.forEach((st) => pts.push(st.from === "a" ? st.l.userData.b : st.l.userData.a));
-    pts.pop(); // last point equals the first
+    const pts = [nl.userData.b];
+    path.forEach((st) => pts.push(st.from === "a" ? st.l.userData.b : st.l.userData.a)); // the last one is the new line's start
     return { lines: path.map((st) => st.l), pts, A, B, P };
   }
   function sheetFromPoly(pts, A, B, axis, d, sign) {

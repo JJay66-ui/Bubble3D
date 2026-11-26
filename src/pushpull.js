@@ -63,9 +63,28 @@
     if (own) return m.userData.occt;
     const p = m.geometry.parameters || {},
       H = Math.abs(m.userData.height);
-    if (m.userData.imported || p.loop) throw new Error("sketch and imported shapes aren't supported yet");
     if (m.userData.height < 0.05) throw new Error("extrude the shape first");
     if (Math.abs(m.rotation.y) > 1e-6) throw new Error("rotated shapes aren't supported yet");
+    if (m.userData.loopPts) {
+      // Sketch shape (triangle, polygon...): rebuild it in OCCT from its corner points
+      const sx = m.scale.x,
+        sz = m.scale.z,
+        ox = m.position.x,
+        oz = m.position.z;
+      const pts = m.userData.loopPts.map((q) => [q.x * sx + ox, q.z * sz + oz]);
+      const n = pts.length;
+      const edges = step("sketch edges", () =>
+        pts.map((a, i) => {
+          const b = pts[(i + 1) % n];
+          return k.makeLineEdge(a[0], -a[1], 0, b[0], -b[1], 0);
+        })
+      );
+      const wire = step("sketch wire", () => k.makeWire(edges));
+      const face = step("sketch face", () => k.makeFace(wire));
+      return { s: step("sketch solid", () => k.extrude(face, 0, 0, H)), H };
+    }
+    if (m.userData.imported || p.loop)
+      throw new Error("STL imports, cut results and moved filleted shapes aren't supported yet");
     const cx = m.position.x,
       cz = m.position.z;
     if (p.radiusTop !== undefined) {
@@ -174,6 +193,56 @@
     });
   }
 
+  // Remember the corner points of sketch shapes so OCCT can rebuild them
+  const _lts = loopToShape;
+  loopToShape = function (loop) {
+    const mesh = _lts(loop);
+    mesh.userData.loopPts = loop.pts.map((p) => p.clone());
+    return mesh;
+  };
+
+  // Middle of a shape's footprint (area centroid), so a triangle's arrow sits in its middle
+  const cenCache = new WeakMap();
+  window.cadCentroid = function (m) {
+    m.updateMatrixWorld(true);
+    const g = m.geometry;
+    let c = cenCache.get(g);
+    if (!c) {
+      const pos = g.attributes.position,
+        idx = g.index,
+        n = (idx ? idx.count : pos.count) / 3;
+      let A = 0,
+        sx = 0,
+        sz = 0;
+      const at = (i) => (idx ? idx.getX(i) : i);
+      for (let t = 0; t < n; t++) {
+        const i = at(3 * t),
+          j = at(3 * t + 1),
+          l = at(3 * t + 2);
+        const ax = pos.getX(i),
+          az = pos.getZ(i),
+          bx = pos.getX(j),
+          bz = pos.getZ(j),
+          cx = pos.getX(l),
+          cz = pos.getZ(l);
+        const area = Math.abs((bx - ax) * (cz - az) - (cx - ax) * (bz - az)) / 2;
+        A += area;
+        sx += (area * (ax + bx + cx)) / 3;
+        sz += (area * (az + bz + cz)) / 3;
+      }
+      if (A > 1e-9) {
+        c = { x: sx / A, z: sz / A };
+        cenCache.set(g, c);
+      }
+    }
+    if (!c) {
+      const bb = new THREE.Box3().setFromObject(m);
+      return { x: (bb.min.x + bb.max.x) / 2, z: (bb.min.z + bb.max.z) / 2 };
+    }
+    const v = new THREE.Vector3(c.x, 0, c.z).applyMatrix4(m.matrixWorld);
+    return { x: v.x, z: v.z };
+  };
+
   // ---------- Arrow: centered on the object and drawn over everything ----------
   [shaft, head, downHead].forEach((a) => {
     a.material.depthTest = false;
@@ -183,7 +252,8 @@
   showArrow = function (mesh) {
     _show(mesh);
     const bb = new THREE.Box3().setFromObject(mesh);
-    arrow.position.set((bb.min.x + bb.max.x) / 2, bb.max.y, (bb.min.z + bb.max.z) / 2);
+    const c = window.cadCentroid(mesh);
+    arrow.position.set(c.x, bb.max.y, c.z);
   };
 
   // ---------- Side arrows on boxes ----------

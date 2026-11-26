@@ -11,7 +11,7 @@
     selObjs = [];
   const hl = new THREE.Group();
   scene.add(hl);
-  const say = (t) => (hint.textContent = t);
+ const say = (t) => { hint.textContent = t; if (window.cadToast && /fail|not ready|Enter a|Only flat|missing/i.test(t)) cadToast(t); };
   const vis = () => shapes.filter((s) => s.visible !== false);
   const toggle = (a, x) => {
     const i = a.indexOf(x);

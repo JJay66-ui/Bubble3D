@@ -200,7 +200,85 @@
     l.userData.used = true; // keep these out of the ground "closed loop" detection
     l.userData.a = a.clone();
     l.userData.b = b.clone();
+    l.userData.plane = { axis: view.axis, d: a[view.axis], sign: view.sign };
     return l;
+  }
+  const key2 = (v, A, B) => Math.round(v[A] * 100) + "," + Math.round(v[B] * 100);
+  // find a closed loop of plane lines that includes the new segment
+  function findLoop(nl) {
+    const P = nl.userData.plane,
+      [A, B] = others(P.axis);
+    const pool = shapes.concat(scene.children).filter(
+      (o, i, arr) =>
+        arr.indexOf(o) === i &&
+        o.userData &&
+        o.userData.isLine &&
+        o.userData.plane &&
+        o.userData.plane.axis === P.axis &&
+        Math.abs(o.userData.plane.d - P.d) < 1e-6 &&
+        o.parent === scene
+    );
+    pool.push(nl);
+    const ends = (l) => [key2(l.userData.a, A, B), key2(l.userData.b, A, B)];
+    const target = ends(nl)[0];
+    const path = [];
+    const used = new Set([nl]);
+    function dfs(at) {
+      if (at === target && path.length >= 2) return true;
+      for (const l of pool) {
+        if (used.has(l)) continue;
+        const [x, y] = ends(l);
+        if (x !== at && y !== at) continue;
+        used.add(l);
+        path.push({ l, from: x === at ? "a" : "b" });
+        if (dfs(x === at ? y : x)) return true;
+        path.pop();
+        used.delete(l);
+      }
+      return false;
+    }
+    if (!dfs(ends(nl)[1])) return null;
+    const pts = [nl.userData.a];
+    path.forEach((st) => pts.push(st.from === "a" ? st.l.userData.b : st.l.userData.a));
+    pts.pop(); // last point equals the first
+    return { lines: path.map((st) => st.l), pts, A, B, P };
+  }
+  function sheetFromPoly(pts, A, B, axis, d, sign) {
+    const T = 0.02;
+    const shp = new THREE.Shape(pts.map((p) => new THREE.Vector2(p[A], p[B])));
+    const g = new THREE.ExtrudeGeometry(shp, { depth: T, bevelEnabled: false }).toNonIndexed();
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const u = pos.getX(i),
+        v = pos.getY(i),
+        w = pos.getZ(i),
+        o = new THREE.Vector3();
+      o[A] = u;
+      o[B] = v;
+      o[axis] = d - sign * w;
+      pos.setXYZ(i, o.x, o.y, o.z);
+    }
+    const parity = axis === "y" ? -1 : 1;
+    if (parity * -sign < 0)
+      for (let i = 0; i < pos.count; i += 3) {
+        const x = pos.getX(i + 1),
+          y = pos.getY(i + 1),
+          z = pos.getZ(i + 1);
+        pos.setXYZ(i + 1, pos.getX(i + 2), pos.getY(i + 2), pos.getZ(i + 2));
+        pos.setXYZ(i + 2, x, y, z);
+      }
+    g.deleteAttribute("normal");
+    g.deleteAttribute("uv");
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(
+      g,
+      new THREE.MeshStandardMaterial({ color: 0x6aa9ff, metalness: 0.1, roughness: 0.6, side: THREE.DoubleSide })
+    );
+    m.userData.imported = true;
+    m.userData.height = 0;
+    m.userData.edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), new THREE.LineBasicMaterial({ color: 0xffffff }));
+    m.add(m.userData.edges);
+    return m;
   }
   function clearPrev() {
     if (prev) {
@@ -313,6 +391,24 @@
       m.add(m.userData.edges);
       made = [m];
     } else made = segs.map(([a, b]) => makeLine3D(a, b));
+    if (s.tool === "line") {
+      const loop = findLoop(made[0]);
+      if (loop && loop.pts.length >= 3) {
+        const sheet = sheetFromPoly(loop.pts, loop.A, loop.B, loop.P.axis, loop.P.d, loop.P.sign);
+        perform({
+          redo() {
+            loop.lines.forEach(removeFromScene);
+            addToScene(sheet);
+          },
+          undo() {
+            removeFromScene(sheet);
+            loop.lines.forEach(addToScene);
+          }
+        });
+        hint.textContent = "Closed shape. Tap its face, then Extrude.";
+        return;
+      }
+    }
     perform({
       redo() {
         made.forEach(addToScene);

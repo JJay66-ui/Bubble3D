@@ -202,6 +202,7 @@
       const bb = new THREE.Box3().setFromObject(selected);
       const c = window.cadCentroid(selected);
       arrow.position.set(c.x, bb.max.y, c.z);
+      downHead.visible = bb.min.y < 0.02; // red arrow only for the face sitting on the plate
       downHead.position.y = bb.min.y - bb.max.y - 0.45;
     }
     if (sess) {

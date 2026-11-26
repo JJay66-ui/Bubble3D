@@ -361,7 +361,7 @@
     let ok = 0;
     by.forEach((chs, m) => {
       try {
-        bevelEdges(k, m, chs, kind, size);
+        (window.cadBevelEdges || bevelEdges)(k, m, chs, kind, size);
         ok++;
       } catch (err) {
         say("OCCT " + kind + " failed (" + (err.message || err) + ").");

@@ -521,6 +521,8 @@
   async function commitFace(f, d) {
     if (Math.abs(d) < 0.05) return;
     const A = f.mesh;
+    // Clean path: slide the whole wall, so the object stays one solid at full height
+    if (window.cadSlide && window.cadSlide(f, d)) return;
     if (Math.abs(f.n.y) < 0.05) {
       let LA = null;
       try {

@@ -498,16 +498,40 @@
 
   function showPreview(d) {
     clearPreview();
-    if (!cur || Math.abs(d) < 0.01 || Math.abs(cur.f.n.y) > 0.05) return;
-    const s = faceSeg(cur.f, window.cadTopo(cur.f.mesh));
-    const shape = new THREE.Shape(quadRing(s, d).slice(0, 4).map((p) => new THREE.Vector2(p[0], -p[1])));
-    const g = new THREE.ExtrudeGeometry(shape, { depth: Math.max(0.01, s.y1 - s.y0), bevelEnabled: false });
-    g.rotateX(-Math.PI / 2);
-    g.translate(0, s.y0, 0);
+    if (!cur || Math.abs(d) < 0.01) return;
+    // the preview follows the face's real outline (a triangle stays a triangle)
+    const T = window.cadTopo(cur.f.mesh),
+      n = cur.f.n,
+      P = [],
+      cnt = new Map(),
+      kk = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.y * 1e3) + "," + Math.round(v.z * 1e3),
+      ek = (a, b) => (kk(a) < kk(b) ? kk(a) + "|" + kk(b) : kk(b) + "|" + kk(a)),
+      push = (v) => P.push(v.x, v.y, v.z),
+      off = (v) => v.clone().addScaledVector(n, d);
+    cur.f.tris.forEach((j) => {
+      const t = T.tris[j];
+      t.v.forEach((v) => push(off(v)));
+      for (let e = 0; e < 3; e++) {
+        const a = t.v[e],
+          b = t.v[(e + 1) % 3],
+          key = ek(a, b),
+          r = cnt.get(key);
+        if (r) r.n++;
+        else cnt.set(key, { n: 1, a, b });
+      }
+    });
+    cnt.forEach((r) => {
+      if (r.n !== 1) return;
+      const a2 = off(r.a),
+        b2 = off(r.b);
+      [r.a, r.b, b2, r.a, b2, a2].forEach(push);
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
     prev = new THREE.Mesh(
       g,
       new THREE.MeshBasicMaterial({
-        color: d > 0 ? 0x3ddc84 : 0xff6b6b,
+        color: 0x3ddc84,
         transparent: true,
         opacity: 0.45,
         depthTest: false,

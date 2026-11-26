@@ -30,11 +30,22 @@
       throw new Error(name + ": " + (e.message || e));
     }
   };
-  const vec = (v) => (Array.isArray(v) ? v : [v.x, v.y, v.z]);
-  const bbox = (k, s) => {
-    const b = k.getBoundingBox(s);
-    return { min: vec(b.min), max: vec(b.max) };
+  // getBoundingBox may return {min,max}, a flat array of 6 numbers, or xmin/xmax-style fields
+  const normBox = (b) => {
+    if (b === undefined || b === null) throw new Error("getBoundingBox returned nothing");
+    const pick = (v) => (Array.isArray(v) || ArrayBuffer.isView(v) ? [v[0], v[1], v[2]] : [v.x, v.y, v.z]);
+    if ((Array.isArray(b) || ArrayBuffer.isView(b)) && b.length >= 6 && typeof b[0] === "number")
+      return { min: [b[0], b[1], b[2]], max: [b[3], b[4], b[5]] };
+    if (b.min && b.max) return { min: pick(b.min), max: pick(b.max) };
+    const f = (names) => {
+      for (const n of names) if (typeof b[n] === "number") return b[n];
+    };
+    const mn = ["x", "y", "z"].map((a) => f([a + "min", a + "Min", "min" + a.toUpperCase(), a + "_min"]));
+    const mx = ["x", "y", "z"].map((a) => f([a + "max", a + "Max", "max" + a.toUpperCase(), a + "_max"]));
+    if (mn.concat(mx).every((v) => typeof v === "number")) return { min: mn, max: mx };
+    throw new Error("unknown bounding box format " + JSON.stringify(Array.from ? b : b).slice(0, 120));
   };
+  const bbox = (k, s) => normBox(k.getBoundingBox(s));
   function put(k, s, x, y, z) {
     const b = bbox(k, s);
     const d = [x - b.min[0], y - b.min[1], z - b.min[2]];
@@ -251,6 +262,7 @@
 
   // ---------- Carve: whatever overlaps the pushed object is removed from the others ----------
   function carve(tool) {
+    if (window.cadCarve) return window.cadCarve(tool); // carve.js does this without OCCT
     const k = K();
     if (!k || !O() || !O().toGeometry) return;
     const tb = new THREE.Box3().setFromObject(tool).expandByScalar(-0.01);

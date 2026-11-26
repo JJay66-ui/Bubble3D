@@ -155,7 +155,7 @@
       const bb = new THREE.Box3().setFromPoints(pts);
       chains.push({ mesh: m, pts, bb, c: bb.getCenter(new THREE.Vector3()) });
     });
-    const out = { key, tris, faces, chains };
+    const out = { key, tris, faces, chains, emap };
     cache.set(m, out);
     return out;
   }
@@ -377,6 +377,75 @@
       say("OCCT " + kind + " applied to the selected edges.");
     }
   }
+  // Is every wall around this face square to it? Then the face can slide and the whole object stays one solid.
+  function slideable(T, face) {
+    const inF = new Set(face.tris);
+    for (const j of face.tris) {
+      const t = T.tris[j];
+      for (let e = 0; e < 3; e++) {
+        const ns = T.emap.get(ekey(t.k[e], t.k[(e + 1) % 3])) || [];
+        for (const k of ns) if (!inF.has(k) && Math.abs(T.tris[k].n.dot(face.n)) > 0.05) return false;
+      }
+    }
+    return true;
+  }
+  // Slide a flat face along its normal by d (negative = inwards). The neighbouring walls stretch with it.
+  function slideFace(face, d) {
+    const A = face.mesh,
+      T = topo(A);
+    A.updateMatrixWorld(true);
+    const kk = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.y * 1e3) + "," + Math.round(v.z * 1e3),
+      tgt = new Set();
+    face.tris.forEach((j) => T.tris[j].v.forEach((v) => tgt.add(kk(v))));
+    const g = A.geometry.clone().applyMatrix4(A.matrixWorld),
+      pos = g.attributes.position,
+      w = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      w.fromBufferAttribute(pos, i);
+      if (tgt.has(kk(w))) pos.setXYZ(i, w.x + face.n.x * d, w.y + face.n.y * d, w.z + face.n.z * d);
+    }
+    g.computeVertexNormals();
+    g.computeBoundingBox();
+    const ctr = g.boundingBox.getCenter(new THREE.Vector3());
+    g.translate(-ctr.x, -ctr.y, -ctr.z);
+    const keep = {
+      geo: A.geometry,
+      pos: A.position.clone(),
+      scl: A.scale.clone(),
+      quat: A.quaternion.clone(),
+      imp: A.userData.imported,
+      h: A.userData.height,
+      eg: A.userData.edges ? A.userData.edges.geometry : null
+    };
+    const eg = new THREE.EdgesGeometry(g, 20);
+    perform({
+      redo() {
+        A.geometry = g;
+        A.position.copy(ctr);
+        A.scale.set(1, 1, 1);
+        A.quaternion.set(0, 0, 0, 1);
+        A.userData.imported = true;
+        A.userData.height = 0;
+        A.userData.loopPts = null;
+        A.userData.occt = null;
+        A.material.side = THREE.DoubleSide;
+        if (A.userData.edges) A.userData.edges.geometry = eg;
+        A.updateMatrixWorld(true);
+      },
+      undo() {
+        A.geometry = keep.geo;
+        A.position.copy(keep.pos);
+        A.scale.copy(keep.scl);
+        A.quaternion.copy(keep.quat);
+        A.userData.imported = keep.imp;
+        A.userData.height = keep.h;
+        if (A.userData.edges && keep.eg) A.userData.edges.geometry = keep.eg;
+        A.updateMatrixWorld(true);
+      }
+    });
+    clearSel();
+    say("Extruded. It is still one solid.");
+  }
   function faceExtrude(dist) {
     const f = selFaces[0];
     if (!f) return;
@@ -384,6 +453,30 @@
     if (!(Math.abs(dist) > 0.001)) return say("Enter a distance above 0.");
     const sg = dist < 0 ? -1 : 1; // negative = extrude the other way, into/through the face
     dist = Math.abs(dist);
+    {
+      const T0 = topo(f.mesh);
+      let lo = Infinity,
+        hi = -Infinity;
+      T0.tris.forEach((t) =>
+        t.v.forEach((v) => {
+          const p = v.dot(f.n);
+          lo = Math.min(lo, p);
+          hi = Math.max(hi, p);
+        })
+      );
+      const th = hi - lo;
+      if (sg > 0 && slideable(T0, f)) return slideFace(f, dist);
+      if (sg < 0) {
+        if (th < 0.1) {
+          // thin sheet: the other way means growing from its back face
+          let back = null;
+          T0.faces.forEach((g) => {
+            if (g.planar && g.n.dot(f.n) < -0.99 && (!back || g.c.dot(f.n) < back.c.dot(f.n))) back = g;
+          });
+          if (back && slideable(T0, back)) return slideFace(back, dist);
+        } else if (dist < th - 0.01 && slideable(T0, f)) return slideFace(f, -dist);
+      }
+    }
     const T = topo(f.mesh),
       n = f.n.clone().multiplyScalar(sg),
       P = [],

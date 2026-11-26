@@ -285,7 +285,34 @@
         segs = c.map((q, i) => [q, c[(i + 1) % 4]]);
     }
     if (!segs.length) return;
-    const made = segs.map(([a, b]) => makeLine3D(a, b));
+    let made;
+    if (s.tool === "rect") {
+      // a thin sheet on the plane: tap its face, then Extrude pulls it out along that face's normal
+      const c = corners(s.a, p),
+        [A, B] = others(view.axis),
+        T = 0.02;
+      const size = new THREE.Vector3();
+      size[A] = Math.abs(c[2][A] - c[0][A]);
+      size[B] = Math.abs(c[2][B] - c[0][B]);
+      size[view.axis] = T;
+      const g = new THREE.BoxGeometry(size.x, size.y, size.z);
+      const m = new THREE.Mesh(
+        g,
+        new THREE.MeshStandardMaterial({ color: 0x6aa9ff, metalness: 0.1, roughness: 0.6 })
+      );
+      m.position.set(0, 0, 0);
+      m.position[A] = (c[0][A] + c[2][A]) / 2;
+      m.position[B] = (c[0][B] + c[2][B]) / 2;
+      m.position[view.axis] = s.d - view.sign * (T / 2);
+      m.userData.imported = true;
+      m.userData.height = 0;
+      m.userData.edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(g),
+        new THREE.LineBasicMaterial({ color: 0xffffff })
+      );
+      m.add(m.userData.edges);
+      made = [m];
+    } else made = segs.map(([a, b]) => makeLine3D(a, b));
     perform({
       redo() {
         made.forEach(addToScene);

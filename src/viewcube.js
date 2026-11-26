@@ -405,6 +405,7 @@
             loop.lines.forEach(addToScene);
           }
         });
+        chooseTool("select");
         hint.textContent = "Closed shape. Tap its face, then Extrude.";
         return;
       }
@@ -417,6 +418,10 @@
         made.forEach(removeFromScene);
       }
     });
+    if (s.tool === "rect") {
+      chooseTool("select");
+      hint.textContent = "Tap the sheet's face, then Extrude.";
+    }
   };
   host.addEventListener("pointerup", finish(true), true);
   host.addEventListener("pointercancel", finish(false), true);

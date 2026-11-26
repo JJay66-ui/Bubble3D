@@ -175,5 +175,5 @@
     }
   }
 
-  window.occtOps = { cut, bevel };
+  window.occtOps = { cut, bevel, build, toGeometry, addEdges };.
 })();

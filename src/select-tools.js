@@ -391,7 +391,6 @@
     f.tris.forEach((j) => {
       const t = T.tris[j];
       add(off(t.v[0]), off(t.v[1]), off(t.v[2])); // top
-      add(t.v[0], t.v[2], t.v[1]); // bottom, reversed
       for (let e = 0; e < 3; e++) {
         const ek = ekey(t.k[e], t.k[(e + 1) % 3]),
           r = cnt.get(ek);
@@ -404,36 +403,57 @@
       add(r.a, r.b, off(r.b));
       add(r.a, off(r.b), off(r.a));
     });
+    // keep the rest of the original object, so the result is ONE solid
+    const skip = new Set(f.tris);
+    T.tris.forEach((t, k) => {
+      if (!skip.has(k)) add(t.v[0], t.v[1], t.v[2]);
+    });
+    const A = f.mesh;
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
     g.computeVertexNormals();
-    const mesh = new THREE.Mesh(
-      g,
-      new THREE.MeshStandardMaterial({
-        color: f.mesh.material.color.getHex(),
-        metalness: 0.1,
-        roughness: 0.6,
-        side: THREE.DoubleSide
-      })
-    );
-    mesh.userData.imported = true;
-    mesh.userData.height = 0;
-    mesh.userData.name = "Face extrude";
-    mesh.userData.edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(g, 20),
-      new THREE.LineBasicMaterial({ color: 0xffffff })
-    );
-    mesh.add(mesh.userData.edges);
+    g.computeBoundingBox();
+    const ctr = g.boundingBox.getCenter(new THREE.Vector3());
+    g.translate(-ctr.x, -ctr.y, -ctr.z); // recentre on the whole object
+    const keep = {
+      geo: A.geometry,
+      pos: A.position.clone(),
+      scl: A.scale.clone(),
+      quat: A.quaternion.clone(),
+      imp: A.userData.imported,
+      h: A.userData.height,
+      eg: A.userData.edges ? A.userData.edges.geometry : null,
+      mat: A.material.side
+    };
+    const eg = new THREE.EdgesGeometry(g, 20);
     perform({
       redo() {
-        addToScene(mesh);
+        A.geometry = g;
+        A.position.copy(ctr);
+        A.scale.set(1, 1, 1);
+        A.quaternion.set(0, 0, 0, 1);
+        A.userData.imported = true;
+        A.userData.height = 0;
+        A.userData.loopPts = null;
+        A.userData.occt = null;
+        A.material.side = THREE.DoubleSide;
+        if (A.userData.edges) A.userData.edges.geometry = eg;
+        A.updateMatrixWorld(true);
       },
       undo() {
-        removeFromScene(mesh);
+        A.geometry = keep.geo;
+        A.position.copy(keep.pos);
+        A.scale.copy(keep.scl);
+        A.quaternion.copy(keep.quat);
+        A.userData.imported = keep.imp;
+        A.userData.height = keep.h;
+        A.material.side = keep.mat;
+        if (A.userData.edges && keep.eg) A.userData.edges.geometry = keep.eg;
+        A.updateMatrixWorld(true);
       }
     });
     clearSel();
-    say("Face extruded as a new solid sitting on the face.");
+    say("Face extruded. It is now part of the whole object.");
   }
 
   // ---------- Panel and mode buttons ----------

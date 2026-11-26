@@ -15,7 +15,7 @@ const UNITS = [
   { name: "cm", perUnit: 1 },
   { name: "in", perUnit: 0.3937008 }
 ];
-let unitIndex = 1;
+let unitIndex = 0; // start in millimeters
 function toDisplay(sceneVal) {
   return (
     sceneVal *
@@ -126,7 +126,7 @@ const tools = [
   ["redo", "\u21aa", "Redo"],
   ["under", "👁", "Below"],
   ["snap", "🧲", "Snap"],
-  ["units", "📏", "cm"],
+  ["units", "📏", "mm"],
   ["export", "\u2b07\ufe0f", "STL Out"],
   ["import", "\u2b06\ufe0f", "STL In"],
   ["clear", "\ud83d\uddd1", "Clear"]

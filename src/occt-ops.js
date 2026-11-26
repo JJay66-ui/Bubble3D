@@ -37,6 +37,45 @@
     const mn = ["x", "y", "z"].map((a) => f([a + "min", a + "Min", "min" + a.toUpperCase(), a + "_min"]));
     const mx = ["x", "y", "z"].map((a) => f([a + "max", a + "Max", "max" + a.toUpperCase(), a + "_max"]));
     if (mn.concat(mx).every((v) => typeof v === "number")) return { min: mn, max: mx };
+    throw new Error("unknown bounding box format " + JSON.stringify(// Connects the OCCT kernel to Cut, Fillet and Chamfer.
+// Every function returns true if OCCT handled it, false to use the built-in version.
+// Works on unrotated boxes and cylinders. Anything else falls back.
+(function () {
+  const TWO_PI = Math.PI * 2;
+  let logged = false;
+
+  function kernel() {
+    return window.cadKernelReady ? window.occtKernel : null;
+  }
+  function fail(label, err) {
+    hint.textContent =
+      "OCCT " + label + " not used (" + (err.message || err) + "). Built-in version used.";
+    console.warn("OCCT " + label + " failed:", err);
+    if (!logged) {
+      logged = true;
+      const k = kernel();
+      console.log(
+        "Kernel methods:",
+        Object.getOwnPropertyNames(Object.getPrototypeOf(k)).join(", ")
+      );
+    }
+    return false;
+  }
+
+  // Move an OCCT shape so its bounding-box minimum sits at (x, y, z).
+  // getBoundingBox may return {min,max}, a flat array of 6 numbers, or xmin/xmax-style fields
+  function boxOf(k, s) {
+    const b = k.getBoundingBox(s);
+    const pick = (v) => (Array.isArray(v) || ArrayBuffer.isView(v) ? [v[0], v[1], v[2]] : [v.x, v.y, v.z]);
+    if ((Array.isArray(b) || ArrayBuffer.isView(b)) && b.length >= 6)
+      return { min: [b[0], b[1], b[2]], max: [b[3], b[4], b[5]] };
+    if (b && b.min && b.max) return { min: pick(b.min), max: pick(b.max) };
+    const f = (names) => {
+      for (const n of names) if (b && typeof b[n] === "number") return b[n];
+    };
+    const mn = ["x", "y", "z"].map((a) => f([a + "min", a + "Min", "min" + a.toUpperCase(), a + "_min"]));
+    const mx = ["x", "y", "z"].map((a) => f([a + "max", a + "Max", "max" + a.toUpperCase(), a + "_max"]));
+    if (mn.concat(mx).every((v) => typeof v === "number")) return { min: mn, max: mx };
     throw new Error("unknown bounding box format " + JSON.stringify(b).slice(0, 120));
   }
   function place(k, s, x, y, z) {
@@ -190,5 +229,5 @@
     }
   }
 
-  window.occtOps = { cut, bevel };
+  window.occtOps = { cut, bevel, build, toGeometry, addEdges };
 })();

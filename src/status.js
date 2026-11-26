@@ -30,6 +30,7 @@
     box.style.background = ready ? "#1f7a4d" : notes.length ? "#a93226" : "#555";
     box.textContent =
       (ready ? "CAD kernel: ready" : "CAD kernel: not loaded yet") +
+      "  |  build r12" +
       (notes.length ? "\n" + notes.join("\n") : "") +
       "\n(tap to hide)";
   }

@@ -540,9 +540,42 @@
         }
       }
     }
+    // Plain boxes (like sheets drawn on a view plane): pushing in shortens the box
+    if (d < 0 && A.geometry && A.geometry.type === "BoxGeometry") {
+      const P = A.geometry.parameters,
+        q = A.getWorldQuaternion(new THREE.Quaternion()).invert(),
+        ln = f.n.clone().applyQuaternion(q);
+      const ax = ["x", "y", "z"].sort((a, b) => Math.abs(ln[b]) - Math.abs(ln[a]))[0];
+      const key = { x: "width", y: "height", z: "depth" }[ax];
+      const sc = A.scale[ax] || 1,
+        old = P[key],
+        nw = old + d / sc;
+      if (nw < 0.01) return toast("That would push all the way through. Use a smaller distance.");
+      const dims = { width: P.width, height: P.height, depth: P.depth };
+      dims[key] = nw;
+      const oldG = A.geometry,
+        newG = new THREE.BoxGeometry(dims.width, dims.height, dims.depth),
+        oldE = A.userData.edges ? A.userData.edges.geometry : null,
+        newE = oldE ? new THREE.EdgesGeometry(newG) : null,
+        oldPos = A.position.clone(),
+        newPos = A.position.clone().addScaledVector(f.n, d / 2);
+      perform({
+        redo() {
+          A.geometry = newG;
+          A.position.copy(newPos);
+          if (newE) A.userData.edges.geometry = newE;
+        },
+        undo() {
+          A.geometry = oldG;
+          A.position.copy(oldPos);
+          if (oldE) A.userData.edges.geometry = oldE;
+        }
+      });
+      return;
+    }
     // Other flat faces: pulling out adds a new solid on the face
     if (d > 0 && window.cadFaceExtrude) return window.cadFaceExtrude(d);
-    toast("Pushing in works on the flat sides of boxes, sketch shapes and carved shapes");
+    toast("Pushing in works on boxes, sheets, sketch shapes and carved shapes. Other shapes can only be pulled out.");
   }
 
   addEventListener(

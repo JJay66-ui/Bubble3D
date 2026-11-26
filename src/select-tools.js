@@ -381,16 +381,19 @@
     const f = selFaces[0];
     if (!f) return;
     if (!f.planar) return say("Only flat faces can be extruded.");
-    if (!(dist > 0.001)) return say("Enter a distance above 0.");
+    if (!(Math.abs(dist) > 0.001)) return say("Enter a distance above 0.");
+    const sg = dist < 0 ? -1 : 1; // negative = extrude the other way, into/through the face
+    dist = Math.abs(dist);
     const T = topo(f.mesh),
-      n = f.n,
+      n = f.n.clone().multiplyScalar(sg),
       P = [],
       cnt = new Map();
     const add = (a, b, c) => P.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    const addo = sg > 0 ? add : (a, b, c) => add(a, c, b);
     const off = (v) => v.clone().addScaledVector(n, dist);
     f.tris.forEach((j) => {
       const t = T.tris[j];
-      add(off(t.v[0]), off(t.v[1]), off(t.v[2])); // top
+      addo(off(t.v[0]), off(t.v[1]), off(t.v[2])); // top
       for (let e = 0; e < 3; e++) {
         const ek = ekey(t.k[e], t.k[(e + 1) % 3]),
           r = cnt.get(ek);
@@ -400,8 +403,8 @@
     });
     cnt.forEach((r) => {
       if (r.n !== 1) return; // only the face's outline gets walls
-      add(r.a, r.b, off(r.b));
-      add(r.a, off(r.b), off(r.a));
+      addo(r.a, r.b, off(r.b));
+      addo(r.a, off(r.b), off(r.a));
     });
     // keep the rest of the original object, so the result is ONE solid
     const skip = new Set(f.tris);
@@ -514,7 +517,10 @@
       if (nF === 1) {
         const i = num(1);
         row(txt("Extrude"), i, txt(u));
-        row(btn("Extrude face", () => faceExtrude(toScene(parseFloat(i.value)))));
+        row(
+          btn("Extrude out", () => faceExtrude(toScene(parseFloat(i.value)))),
+          btn("Extrude other way", () => faceExtrude(-toScene(parseFloat(i.value))))
+        );
       } else row(txt("Select one face to extrude"));
     }
     if (nO) {
@@ -718,6 +724,24 @@
   window.cadTopo = topo;
   window.cadSelFaces = () => selFaces;
   window.cadFaceExtrude = (d) => faceExtrude(d);
+  // select the flat face of a mesh that points most toward dir (used right after drawing a sheet)
+  window.cadSelectFaceToward = function (mesh, dir) {
+    const T = topo(mesh);
+    let best = null,
+      bd = 0.5;
+    T.faces.forEach((f) => {
+      const d = f.n.dot(dir);
+      if (f.planar && d > bd) {
+        bd = d;
+        best = f;
+      }
+    });
+    if (!best) return;
+    selFaces = [best];
+    selEdges = [];
+    selObjs = [];
+    changed();
+  };
 
   // ---------- Keep highlights in sync ----------
   (function frame() {

@@ -550,6 +550,31 @@
       const sc = A.scale[ax] || 1,
         old = P[key],
         nw = old + d / sc;
+      if (nw < 0.01 && old < 0.1) {
+        // thin sheet: pushing in builds a solid going the other way from this face
+        const T = -d,
+          oldG2 = A.geometry,
+          dims2 = { width: P.width, height: P.height, depth: P.depth };
+        dims2[key] = T;
+        const g2 = new THREE.BoxGeometry(dims2.width, dims2.height, dims2.depth),
+          e0 = A.userData.edges ? A.userData.edges.geometry : null,
+          e2 = e0 ? new THREE.EdgesGeometry(g2) : null,
+          p0 = A.position.clone(),
+          p2 = A.position.clone().addScaledVector(f.n, old / 2 + d / 2);
+        perform({
+          redo() {
+            A.geometry = g2;
+            A.position.copy(p2);
+            if (e2) A.userData.edges.geometry = e2;
+          },
+          undo() {
+            A.geometry = oldG2;
+            A.position.copy(p0);
+            if (e0) A.userData.edges.geometry = e0;
+          }
+        });
+        return;
+      }
       if (nw < 0.01) return toast("That would push all the way through. Use a smaller distance.");
       const dims = { width: P.width, height: P.height, depth: P.depth };
       dims[key] = nw;

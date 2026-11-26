@@ -5,13 +5,16 @@
   const el = renderer.domElement;
   const COS_FACE = Math.cos((9 * Math.PI) / 180);
   const COS_FEAT = Math.cos((20 * Math.PI) / 180);
-  let selMode = "object";
+  let selMode = "auto";
   let selFaces = [],
     selEdges = [],
     selObjs = [];
   const hl = new THREE.Group();
   scene.add(hl);
- const say = (t) => { hint.textContent = t; if (window.cadToast && /fail|not ready|Enter a|Only flat|missing/i.test(t)) cadToast(t); };
+  const say = (t) => {
+    hint.textContent = t;
+    if (window.cadToast && /fail|not ready|Enter a|Only flat|missing/i.test(t)) cadToast(t);
+  };
   const vis = () => shapes.filter((s) => s.visible !== false);
   const toggle = (a, x) => {
     const i = a.indexOf(x);
@@ -192,17 +195,13 @@
   function marquee(r) {
     const inR = (p) => p.z <= 1 && p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;
     vis().forEach((m) => {
-      if (selMode === "object") {
-        const c = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3());
-        if (inR(px(c)) && !selObjs.includes(m)) selObjs.push(m);
-      } else if (selMode === "face")
-        topo(m).faces.forEach((f) => {
-          if (inR(px(f.c)) && !selFaces.includes(f)) selFaces.push(f);
-        });
-      else
-        topo(m).chains.forEach((ch) => {
-          if (inR(px(ch.c)) && !selEdges.includes(ch)) selEdges.push(ch);
-        });
+      const T = topo(m);
+      T.faces.forEach((f) => {
+        if (inR(px(f.c)) && !selFaces.includes(f)) selFaces.push(f);
+      });
+      T.chains.forEach((ch) => {
+        if (inR(px(ch.c)) && !selEdges.includes(ch)) selEdges.push(ch);
+      });
     });
     changed();
   }
@@ -540,8 +539,7 @@
     b.onclick = () => setMode(m);
     bar.appendChild(b);
   });
-  document.body.appendChild(bar);
-  setMode("object");
+  say("Click a face or an edge to select it. Drag a box on empty space to select many. Esc clears.");
 
   // ---------- Mouse and pen input ----------
   const marq = document.createElement("div");
@@ -594,11 +592,12 @@
       if (arrow.visible && raycaster.intersectObject(arrow, true)[0]) return;
       const touch = e.pointerType === "touch";
       let hit = null;
-      if (selMode === "face") hit = pickFace(e);
-      else if (selMode === "edge") hit = pickEdge(e, touch ? 18 : 10);
+      const eh = pickEdge(e, touch ? 18 : 10);
+      if (eh) hit = { kind: "edge", v: eh };
       else {
-        hit = raycaster.intersectObjects(vis(), false)[0] || pickLine(e);
-        if (hit) return; // the app handles clicks on shapes and lines
+        const f = pickFace(e);
+        if (f) hit = { kind: "face", v: f };
+        else if (pickLine(e)) return; // sketch lines are handled by the app
       }
       if (touch && !hit) return; // finger on empty space: the app orbits
       pend = { id: e.pointerId, x: e.clientX, y: e.clientY, hit, moved: false };
@@ -648,11 +647,15 @@
       pend = null;
       marq.style.display = "none";
       if (!p.moved) {
-        if (selMode === "face") p.hit ? toggle(selFaces, p.hit) : (selFaces = []);
-        else if (selMode === "edge") p.hit ? toggle(selEdges, p.hit) : (selEdges = []);
-        else {
+        if (!p.hit) {
+          selFaces = [];
+          selEdges = [];
           selObjs = [];
           hideArrow();
+        } else if (p.hit.kind === "edge") toggle(selEdges, p.hit.v);
+        else {
+          toggle(selFaces, p.hit.v);
+          showArrow(p.hit.v.mesh);
         }
         changed();
       } else if (!p.hit) marquee(rectOf(p, e));

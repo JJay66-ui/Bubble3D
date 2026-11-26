@@ -107,6 +107,67 @@
         planar: list.every((j) => tris[j].n.dot(nm) > 0.9994)
       });
     });
+    // Merge flat faces that touch at a corner and lie in the same plane (thin sliver triangles can
+    // otherwise cut one flat face into pieces)
+    {
+      const par = faces.map((_, i) => i);
+      const find = (i) => (par[i] === i ? i : (par[i] = find(par[i])));
+      const dOf = (f) => f.n.dot(f.c);
+      const byV = new Map();
+      faces.forEach((f, i) =>
+        f.tris.forEach((j) =>
+          tris[j].k.forEach((kk) => {
+            if (!byV.has(kk)) byV.set(kk, new Set());
+            byV.get(kk).add(i);
+          })
+        )
+      );
+      byV.forEach((set) => {
+        const ids = [...set];
+        for (let a = 1; a < ids.length; a++) {
+          const f0 = faces[ids[0]],
+            f1 = faces[ids[a]];
+          if (f0.n.dot(f1.n) > COS_FACE && Math.abs(dOf(f0) - dOf(f1)) < 1e-3)
+            par[find(ids[a])] = find(ids[0]);
+        }
+      });
+      const groups = new Map();
+      faces.forEach((f, i) => {
+        const r = find(i);
+        if (!groups.has(r)) groups.set(r, []);
+        groups.get(r).push(f);
+      });
+      if (groups.size < faces.length) {
+        const merged = [];
+        groups.forEach((fs) => {
+          if (fs.length === 1) return merged.push(fs[0]);
+          const list = fs.flatMap((f) => f.tris),
+            c = new THREE.Vector3(),
+            nm = new THREE.Vector3();
+          let A = 0;
+          list.forEach((j) => {
+            const u = tris[j];
+            c.addScaledVector(u.v[0].clone().add(u.v[1]).add(u.v[2]).divideScalar(3), u.area);
+            nm.addScaledVector(u.n, u.area);
+            A += u.area;
+          });
+          c.divideScalar(A);
+          nm.normalize();
+          merged.push({
+            mesh: m,
+            tris: list,
+            c,
+            n: nm,
+            planar: list.every((j) => tris[j].n.dot(nm) > 0.9994)
+          });
+        });
+        faces.length = 0;
+        merged.forEach((f, i) => {
+          faces.push(f);
+          f.tris.forEach((j) => (tris[j].face = i));
+        });
+      }
+    }
     // Sharp edges, chained into whole edges (a circle is one edge)
     const segs = [];
     emap.forEach((ts, ek) => {
@@ -446,6 +507,26 @@
     clearSel();
     say("Extruded. It is still one solid.");
   }
+  // Used by the side arrow: slide a face when that keeps the object one clean solid. Returns false if it can't.
+  window.cadSlide = function (f, d) {
+    if (!f || !f.planar) return false;
+    const T = topo(f.mesh);
+    if (!slideable(T, f)) return false;
+    if (d < 0) {
+      let lo = Infinity,
+        hi = -Infinity;
+      T.tris.forEach((t) =>
+        t.v.forEach((v) => {
+          const p = v.dot(f.n);
+          lo = Math.min(lo, p);
+          hi = Math.max(hi, p);
+        })
+      );
+      if (-d >= hi - lo - 0.01) return false;
+    }
+    slideFace(f, d);
+    return true;
+  };
   function faceExtrude(dist) {
     const f = selFaces[0];
     if (!f) return;

@@ -1559,6 +1559,7 @@ function tryCloseLoop() {
   if (!loop) return;
   const mesh = loopToShape(loop);
   const segs = loop.path;
+  if (window.cadToast) window.cadToast("Closed shape with " + loop.pts.length + " corners", true);
   perform({
     redo() {
       segs.forEach((s) => {

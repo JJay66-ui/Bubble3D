@@ -471,7 +471,7 @@
   (function frame() {
     requestAnimationFrame(frame);
     const m = selected,
-      inf = m && m.visible !== false && sideInfo(m);
+      inf = m && m.visible !== false && !window.cadFaceArrows && sideInfo(m);
     sides.forEach((a) => (a.visible = !!inf));
     if (!inf) return;
     sides.forEach((a) => {

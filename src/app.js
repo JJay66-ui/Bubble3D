@@ -1218,7 +1218,8 @@ renderer.domElement.addEventListener("pointermove", (e) => {
     last = { x: e.clientX, y: e.clientY };
     updateCamera();
   } else if (mode === "arrow" && selected) {
-    const h = dragStartH + (dragStartY - e.clientY) * 0.03;
+    let h = dragStartH + (dragStartY - e.clientY) * 0.03;
+    if (dragStartH >= 0) h = Math.max(h, 0); // pulling an upward shape never goes below the plate
     setHeight(selected, Math.round(h * 4) / 4);
     arrow.position.y = Math.max(selected.userData.height, 0);
     showMeasure("Height: " + fmt(selected.userData.height));

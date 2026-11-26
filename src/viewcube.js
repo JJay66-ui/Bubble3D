@@ -481,6 +481,15 @@
         made.forEach(removeFromScene);
       }
     });
+    if (s.tool === "line") {
+      // second chance: any closed outline among all lines on this plane becomes a solid
+      const same = scene.children.filter(
+        (o) => o.userData && o.userData.plane && o.userData.plane.axis === view.axis && o.userData.isLine
+      );
+      for (const l of same) if (closeWith(l, true)) return;
+      if (window.cadToast)
+        window.cadToast(same.length + " line" + (same.length > 1 ? "s" : "") + " on " + view.name + ". Finish the shape on the first corner and it turns solid.", true);
+    }
     if (s.tool === "rect") {
       lock = null;
       chooseTool("select");
@@ -514,6 +523,13 @@
       show = true;
     }
     grid.visible = show;
+    if (!sk && !(typeof mode !== "undefined" && mode === "arrow")) {
+      shapes.forEach((m) => {
+        if (!m.visible || m.userData.isLine) return;
+        const lo = new THREE.Box3().setFromObject(m).min.y;
+        if (lo < -0.01 && lo > -500) m.position.y -= lo; // the plate is zero: nothing sits below it
+      });
+    }
     mc.position.copy(camera.position).normalize().multiplyScalar(4);
     mc.lookAt(0, 0, 0);
     mr.render(ms, mc);

@@ -441,6 +441,16 @@
   // Is every wall around this face square to it? Then the face can slide and the whole object stays one solid.
   function slideable(T, face) {
     const inF = new Set(face.tris);
+    // anything that only touches the face at a corner must also be square to it, or it would shear
+    const kk2 = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.y * 1e3) + "," + Math.round(v.z * 1e3);
+    const corner = new Set();
+    face.tris.forEach((j) => T.tris[j].v.forEach((v) => corner.add(kk2(v))));
+    for (let k = 0; k < T.tris.length; k++) {
+      if (inF.has(k)) continue;
+      const u = T.tris[k];
+      if (u.face === -2) continue;
+      if (Math.abs(u.n.dot(face.n)) > 0.05 && u.v.some((v) => corner.has(kk2(v)))) return false;
+    }
     for (const j of face.tris) {
       const t = T.tris[j];
       for (let e = 0; e < 3; e++) {
@@ -860,7 +870,7 @@
         } else if (p.hit.kind === "edge") toggle(selEdges, p.hit.v);
         else {
           toggle(selFaces, p.hit.v);
-          showArrow(p.hit.v.mesh);
+          hideArrow(); // the arrow now sits on the selected face itself
         }
         changed();
       } else if (!p.hit) marquee(rectOf(p, e));

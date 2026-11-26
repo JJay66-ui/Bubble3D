@@ -24,9 +24,24 @@
   }
 
   // Move an OCCT shape so its bounding-box minimum sits at (x, y, z).
+  // getBoundingBox may return {min,max}, a flat array of 6 numbers, or xmin/xmax-style fields
+  function boxOf(k, s) {
+    const b = k.getBoundingBox(s);
+    const pick = (v) => (Array.isArray(v) || ArrayBuffer.isView(v) ? [v[0], v[1], v[2]] : [v.x, v.y, v.z]);
+    if ((Array.isArray(b) || ArrayBuffer.isView(b)) && b.length >= 6)
+      return { min: [b[0], b[1], b[2]], max: [b[3], b[4], b[5]] };
+    if (b && b.min && b.max) return { min: pick(b.min), max: pick(b.max) };
+    const f = (names) => {
+      for (const n of names) if (b && typeof b[n] === "number") return b[n];
+    };
+    const mn = ["x", "y", "z"].map((a) => f([a + "min", a + "Min", "min" + a.toUpperCase(), a + "_min"]));
+    const mx = ["x", "y", "z"].map((a) => f([a + "max", a + "Max", "max" + a.toUpperCase(), a + "_max"]));
+    if (mn.concat(mx).every((v) => typeof v === "number")) return { min: mn, max: mx };
+    throw new Error("unknown bounding box format " + JSON.stringify(b).slice(0, 120));
+  }
   function place(k, s, x, y, z) {
-    const bb = k.getBoundingBox(s);
-    return k.translate(s, x - bb.min.x, y - bb.min.y, z - bb.min.z);
+    const bb = boxOf(k, s);
+    return k.translate(s, x - bb.min[0], y - bb.min[1], z - bb.min[2]);
   }
 
   // OCCT is Z-up, the app is Y-up: OCCT (x, y, z) = app (x, -z, y).
@@ -125,8 +140,8 @@
     try {
       const { s, H } = build(k, m, true);
       const edges = k.getSubShapes(s, "edge").filter((e) => {
-        const bb = k.getBoundingBox(e);
-        return bb.min.z > H - 1e-3 && bb.max.z > H - 1e-3;
+        const bb = boxOf(k, e);
+        return bb.min[2] > H - 1e-3 && bb.max[2] > H - 1e-3;
       });
       if (!edges.length) throw new Error("no top edges found");
       const r = Math.min(size, H * 0.49);
@@ -175,5 +190,5 @@
     }
   }
 
-  window.occtOps = { cut, bevel, build, toGeometry, addEdges };
+  window.occtOps = { cut, bevel };
 })();

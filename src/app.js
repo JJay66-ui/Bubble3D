@@ -521,7 +521,7 @@ function makeLine(a, b) {
     a.clone().setY(0.02),
     b.clone().setY(0.02)
   ]);
-  const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff }));
+  const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffd23f }));
   l.userData.isLine = true;
   l.userData.a = a.clone().setY(0.02);
   l.userData.b = b.clone().setY(0.02);
@@ -758,7 +758,7 @@ function showLinePanel(l) {
   ll.value = Math.round(toDisplay(lineLen(l)) * 100) / 100;
   linePanel.style.display = "block";
   setTimeout(placeHandle, 0);
-  if (lineHilite) lineHilite.material.color.set(0xffffff);
+  if (lineHilite) lineHilite.material.color.set(0xffd23f);
   lineHilite = l;
   l.material.color.set(0x3ddc84);
   ll.disabled = !!l.userData.locked;
@@ -766,7 +766,7 @@ function showLinePanel(l) {
 }
 function hideLinePanel() {
   linePanel.style.display = "none";
-  if (lineHilite) lineHilite.material.color.set(0xffffff);
+  if (lineHilite) lineHilite.material.color.set(0xffd23f);
   lineHilite = null;
   selLine = null;
 }
@@ -1255,7 +1255,7 @@ renderer.domElement.addEventListener("pointermove", (e) => {
       ]);
       preview = new THREE.Line(
         g,
-        new THREE.LineBasicMaterial({ color: 0x2f8cff })
+        new THREE.LineBasicMaterial({ color: 0x00e5ff })
       );
     } else if (tool === "rect") {
       const w = Math.max(0.1, Math.abs(p.x - start.x)),

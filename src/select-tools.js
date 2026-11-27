@@ -226,12 +226,26 @@
     const p = v.clone().project(camera);
     return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight, z: p.z };
   }
+  // Tap a spot to get the front face; tap the same spot again to reach faces behind it
+  // (other objects in front, or faces inside another object).
+  let lastPick = null;
   function pickFace(e) {
     setRay(e);
-    const h = raycaster.intersectObjects(vis(), false)[0];
-    if (!h) return null;
-    const T = topo(h.object);
-    return T.faces[T.tris[h.faceIndex].face] || null;
+    const hits = raycaster.intersectObjects(vis(), false);
+    const list = [];
+    hits.forEach((h) => {
+      const T = topo(h.object);
+      const f = T.faces[T.tris[h.faceIndex].face];
+      if (f && list.indexOf(f) < 0) list.push(f);
+    });
+    if (!list.length) return null;
+    let i = 0;
+    if (lastPick && Math.hypot(e.clientX - lastPick.x, e.clientY - lastPick.y) < 8) {
+      const at = list.indexOf(lastPick.f);
+      if (at >= 0) i = (at + 1) % list.length;
+    }
+    lastPick = { x: e.clientX, y: e.clientY, f: list[i] };
+    return list[i];
   }
   function pickEdge(e, tol) {
     let best = null,

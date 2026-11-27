@@ -239,7 +239,7 @@
       if (f && !cand.some((c) => c.f === f)) {
         let area = 0;
         f.tris.forEach((j) => (area += T.tris[j].area || 0));
-        cand.push({ f, d: h.distance, area });
+        cand.push({ f, d: h.distance, area, m: h.object });
       }
     });
     // faces lying on top of each other (a drawn shape on a face): the smaller one is picked first
@@ -247,11 +247,13 @@
     const list = cand.map((c) => c.f);
     if (!list.length) return null;
     let i = 0;
-    if (lastPick && Math.hypot(e.clientX - lastPick.x, e.clientY - lastPick.y) < 8) {
-      const at = list.indexOf(lastPick.f);
+    if (lastPick && Math.hypot(e.clientX - lastPick.x, e.clientY - lastPick.y) < 14) {
+      // find the previous pick again by object (face objects get rebuilt, so identity can't be trusted)
+      let at = cand.findIndex((c) => c.f === lastPick.f);
+      if (at < 0) at = cand.findIndex((c) => c.m === lastPick.m);
       if (at >= 0) i = (at + 1) % list.length;
     }
-    lastPick = { x: e.clientX, y: e.clientY, f: list[i] };
+    lastPick = { x: e.clientX, y: e.clientY, f: list[i], m: cand[i].m };
     return list[i];
   }
   function pickEdge(e, tol) {

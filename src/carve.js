@@ -332,6 +332,11 @@
   const hidePop = () => {
     pop.style.display = "none";
     popB = null;
+    const sp = document.querySelector('[data-dragkey="selpanel"]');
+    if (sp && sp.dataset.hiddenByPop && pp.style.display === "none") {
+      sp.style.visibility = "";
+      delete sp.dataset.hiddenByPop;
+    }
   };
   popX.onclick = hidePop;
   popCut.onclick = async () => {
@@ -363,6 +368,11 @@
     if (!near.length) return hidePop();
     if (typeof ppClose === "function") ppClose();
     popB = B;
+    const sp0 = document.querySelector('[data-dragkey="selpanel"]');
+    if (sp0 && sp0.style.visibility !== "hidden") {
+      sp0.style.visibility = "hidden"; // only Keep / Delete is shown, not the Extrude panel
+      sp0.dataset.hiddenByPop = "1";
+    }
     popTxt.textContent = "Extruded into " + near.length + " object" + (near.length > 1 ? "s" : "") + ":";
     pop.style.display = "flex";
   };

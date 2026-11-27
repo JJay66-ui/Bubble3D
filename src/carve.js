@@ -1107,10 +1107,14 @@
     const A = P.f.mesh;
     if (keep) return commitFace(P.f, P.d); // keep the object: the drag is applied as normal
     // delete the object, and cut its shape out of whatever it intersects
-    if (nearOf(A).length && (await doCarve(A))) return;
+    const axk = ["x", "y", "z"].reduce((m, k) => (Math.abs(P.f.n[k]) > Math.abs(P.f.n[m]) ? k : m), "x");
     try {
-      if (nearOf(A).length && window.cadBoolMany && window.cadBoolMany(A, nearOf(A), "cut")) return;
-    } catch (e) {}
+      // straight through the whole other object, in the direction you pushed
+      if (nearOf(A).length && window.cadBoolMany && window.cadBoolMany(A, nearOf(A), "cut", { ax: axk, through: true })) return;
+    } catch (e) {
+      carveWhy = "through-cut: " + (e.message || e);
+    }
+    if (nearOf(A).length && (await doCarve(A))) return;
     perform({
       redo() {
         removeFromScene(A);

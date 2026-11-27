@@ -1,4 +1,3 @@
-
 // Red/blue line endpoint handles, two-finger camera, accidental-touch guard, fuller undo/redo.
 // Loads after app.js and needs no edits to it.
 (function () {
@@ -23,6 +22,9 @@
   };
   const hA = mk(0xff4d4d),
     hB = mk(0x3b82f6);
+  // keep the grab areas for dragging the ends, but don't show them: the regular blue dots stay as they are
+  hA.material.visible = false;
+  hB.material.visible = false;
   placeHandle = function () {}; // retire the old single green handle
   const _constrain = constrainLine;
   constrainLine = function (kind) {
@@ -94,6 +96,7 @@
   // ---------- Handle dragging ----------
   function tryHandle(e) {
     if (!selLine) return false;
+    if (tool === "line" || tool === "rect" || tool === "circle") return false; // drawing: never grab a handle
     setRay(e);
     const hit = raycaster.intersectObjects([hA, hB], false)[0];
     if (!hit) return false;

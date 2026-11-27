@@ -318,10 +318,10 @@
     "position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:30;display:none;gap:8px;align-items:center;padding:8px 10px;border-radius:16px;background:rgba(28,31,38,.92);border:1px solid rgba(255,255,255,.18);color:#fff;font:13px -apple-system,sans-serif";
   const popTxt = document.createElement("span");
   const popJoin = document.createElement("button");
-  popJoin.textContent = "Keep shape";
+  popJoin.textContent = "Keep object";
   popJoin.style.cssText = "padding:6px 14px;border:none;border-radius:12px;background:#2f8cff;color:#fff;font-size:13px";
   const popCut = document.createElement("button");
-  popCut.textContent = "Cut shape";
+  popCut.textContent = "Delete object";
   popCut.style.cssText = "padding:6px 14px;border:none;border-radius:12px;background:#d64545;color:#fff;font-size:13px";
   const popX = document.createElement("button");
   popX.textContent = "\u2715";
@@ -404,7 +404,7 @@
             addToScene(B);
           }
         };
-        applyOps(ops, "Cut done. The extruded shape is gone. Undo brings it back.", extra);
+        applyOps(ops, "Object deleted, and its shape is cut into the other object. Undo brings it back.", extra);
         return true;
       })
       .catch((e) => {

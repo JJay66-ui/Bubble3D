@@ -623,7 +623,7 @@
         !s.userData.screw &&
         s.visible !== false &&
         !s.userData.isLine &&
-        s.userData.height > 0.05 &&
+        (Math.abs(s.userData.height || 0) > 0.05 || s.userData.imported || s.userData.fromLines) &&
         new THREE.Box3().setFromObject(s).intersectsBox(sb)
     );
     if (!hosts.length) return say("The screw isn't passing through anything yet, so there is nothing to cut. Move it into an object.", false);

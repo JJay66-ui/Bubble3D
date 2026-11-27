@@ -338,8 +338,7 @@
         }
       });
       lock = null;
-      chooseTool("select");
-      hint.textContent = "Closed shape. Use Extrude out or Extrude other way at the bottom right.";
+      hint.textContent = "Closed shape. Drag its arrow to extrude. The drawing tool stays on until you pick another.";
       selectSheet(sheet);
       return true;
     } catch (e) {
@@ -459,7 +458,6 @@
         }
       });
       lock = null;
-      chooseTool("select");
       hint.textContent = "Circle made. Use Extrude out or Extrude other way at the bottom right.";
       selectSheet(sheet);
       return;
@@ -521,7 +519,6 @@
     }
     if (s.tool === "rect") {
       lock = null;
-      chooseTool("select");
       hint.textContent = "Use Extrude out or Extrude other way at the bottom right.";
       selectSheet(made[0]);
     }

@@ -401,16 +401,71 @@
     },
     true
   );
+  // Pop-up for the top view: something sits above the plate where you started drawing
+  let topChoice = null; // {d, tool}
+  const askBox = document.createElement("div");
+  askBox.style.cssText =
+    "position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:31;display:none;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:92vw;padding:10px 12px;border-radius:16px;background:rgba(28,31,38,.95);border:1px solid rgba(255,255,255,.18);color:#fff;font:13px -apple-system,sans-serif";
+  const askTxt = document.createElement("span");
+  askTxt.textContent = "An object is above the plate here. Start drawing on:";
+  const mkAsk = (label, bg) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.style.cssText = "padding:7px 14px;border:none;border-radius:12px;color:#fff;font-size:13px;background:" + bg;
+    return b;
+  };
+  const askPlate = mkAsk("The plate", "#2f8cff"),
+    askObj = mkAsk("The object", "#1f9d63"),
+    askX = mkAsk("\u2715", "rgba(255,255,255,.14)");
+  askBox.append(askTxt, askPlate, askObj, askX);
+  document.body.appendChild(askBox);
+  let askD = 0;
+  function askWhere(topY) {
+    askD = topY;
+    askObj.textContent = "The object (" + Math.round(topY * 10) + " mm up)";
+    askBox.style.display = "flex";
+  }
+  const closeAsk = () => (askBox.style.display = "none");
+  askPlate.onclick = () => {
+    topChoice = { d: 0, tool };
+    closeAsk();
+    hint.textContent = "Drawing on the plate. Draw now.";
+  };
+  askObj.onclick = () => {
+    topChoice = { d: askD, tool };
+    closeAsk();
+    hint.textContent = "Drawing on top of the object. Draw now.";
+  };
+  askX.onclick = closeAsk;
+  setInterval(() => {
+    // forget the choice when you leave the top view or change tool
+    if (!view || view.name !== "Top" || (topChoice && topChoice.tool !== tool)) {
+      topChoice = null;
+      if (askBox.style.display !== "none" && (!view || view.name !== "Top")) closeAsk();
+    }
+  }, 300);
+
   host.addEventListener(
     "pointerdown",
     (e) => {
       if (!view || e.button !== 0) return;
       if (!DRAW.includes(tool) && tool !== "circle") return;
       setRay(e);
-      const hit = raycaster.intersectObjects(shapes.filter((s) => s.visible !== false), false)[0];
+      const hit = raycaster.intersectObjects(shapes.filter((s) => s.visible !== false && !s.userData.screw), false)[0];
       if (view.name === "Top" && !hit) return; // drawing on the ground stays as before
+      if (view.name === "Top") {
+        // looking straight down: draw on the plate first. If an object is in the way, ask where to start.
+        if (!topChoice || topChoice.tool !== tool) {
+          if (!lock || lock.name !== "Top") {
+            askWhere(r3(hit.point.y), hit.object);
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+          }
+        } else if (topChoice.d === 0 && !lock) return; // plate: normal ground drawing
+      }
       if (lock && (lock.name !== view.name || tool !== lock.tool)) lock = null;
-      const d = lock ? lock.d : hit ? r3(hit.point[view.axis]) : nearestDepth();
+      const d = lock ? lock.d : view.name === "Top" && topChoice ? topChoice.d : hit ? r3(hit.point[view.axis]) : nearestDepth();
       lock = { name: view.name, d, tool };
       const p = planePoint(e, d);
       if (!p) return;

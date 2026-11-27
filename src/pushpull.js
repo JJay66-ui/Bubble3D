@@ -476,6 +476,116 @@
     return done;
   };
 
+  // Round hole in ANY direction (with optional thread grooves) through upright prisms and boxes.
+  // center = where the screw touches the surface, dirIn = unit vector pointing into the object,
+  // r = core radius, depth = hole length, grooves = [{s0, s1, r}] distances along dirIn.
+  window.cadAxisHole = function (hosts, center, dirIn, r, depth, grooves, msg) {
+    const k = K();
+    window.cadAxisHoleWhy = "";
+    if (!k) {
+      window.cadAxisHoleWhy = "the shape engine isn't loaded yet";
+      return 0;
+    }
+    const d = dirIn.clone().normalize();
+    const ref = Math.abs(d.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const u = new THREE.Vector3().crossVectors(d, ref).normalize();
+    const v = new THREE.Vector3().crossVectors(d, u).normalize();
+    let done = 0;
+    hosts.forEach((m) => {
+      try {
+        const pr = prismAnyAxis(m, "y");
+        if (!pr) {
+          window.cadAxisHoleWhy = (m.userData.name || "object") + " isn't an upright straight prism";
+          return;
+        }
+        const O = (p) => [p.x, -p.z, p.y - pr.lo]; // app point -> kernel point (base of the prism at 0)
+        const host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
+        const cyl = (rad, s0, s1) =>
+          step("hole solid", () => {
+            const N = 36,
+              c0 = center.clone().addScaledVector(d, s0),
+              pts = [];
+            for (let i = 0; i < N; i++) {
+              const a = (i / N) * TWO_PI;
+              pts.push(O(c0.clone().addScaledVector(u, Math.cos(a) * rad).addScaledVector(v, Math.sin(a) * rad)));
+            }
+            const e = pts.map((a, i) => {
+              const b = pts[(i + 1) % N];
+              return k.makeLineEdge(a[0], a[1], a[2], b[0], b[1], b[2]);
+            });
+            const len = s1 - s0;
+            return k.extrude(k.makeFace(k.makeWire(e)), d.x * len, -d.z * len, d.y * len);
+          });
+        let out = step("cut core", () => k.cut(host, cyl(r, -0.03, depth)));
+        const vol0 = k.getVolume ? Math.abs(k.getVolume(host)) : 1,
+          vol1 = k.getVolume ? Math.abs(k.getVolume(out)) : 0;
+        if (k.getVolume && Math.abs(vol0 - vol1) < 1e-5) {
+          window.cadAxisHoleWhy = "the screw doesn't reach into " + (m.userData.name || "the object");
+          return;
+        }
+        (grooves || []).forEach((g) => {
+          out = step("cut thread", () => k.cut(out, cyl(g.r, g.s0, g.s1)));
+        });
+        const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
+        const P = new Float32Array(t.indices.length * 3);
+        for (let i = 0; i < t.indices.length; i++) {
+          const j = t.indices[i] * 3;
+          P[3 * i] = t.positions[j];
+          P[3 * i + 1] = t.positions[j + 2] + pr.lo;
+          P[3 * i + 2] = -t.positions[j + 1];
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(P, 3));
+        g.computeVertexNormals();
+        const eg = new THREE.EdgesGeometry(g, 30);
+        const b = {
+          geo: m.geometry,
+          pos: m.position.clone(),
+          scl: m.scale.clone(),
+          quat: m.quaternion.clone(),
+          imp: m.userData.imported,
+          h: m.userData.height,
+          og: m.userData.occtG,
+          eg: m.userData.edges ? m.userData.edges.geometry : null
+        };
+        const apply = () => {
+          m.geometry = g;
+          m.position.set(0, 0, 0);
+          m.scale.set(1, 1, 1);
+          m.quaternion.set(0, 0, 0, 1);
+          m.userData.imported = true;
+          m.userData.height = 0;
+          m.userData.loopPts = null;
+          m.userData.occt = null;
+          m.userData.occtG = { geo: g, s: out, ax: "y", lo: pr.lo, H: pr.H };
+          m.material.side = THREE.DoubleSide;
+          if (m.userData.edges) m.userData.edges.geometry = eg;
+          m.updateMatrixWorld(true);
+        };
+        const revert = () => {
+          m.geometry = b.geo;
+          m.position.copy(b.pos);
+          m.scale.copy(b.scl);
+          m.quaternion.copy(b.quat);
+          m.userData.imported = b.imp;
+          m.userData.height = b.h;
+          m.userData.occtG = b.og;
+          if (m.userData.edges && b.eg) m.userData.edges.geometry = b.eg;
+          m.updateMatrixWorld(true);
+        };
+        apply();
+        undoStack.push({ redo: apply, undo: revert });
+        redoStack.length = 0;
+        done++;
+      } catch (e) {
+        window.cadAxisHoleWhy = e.message || String(e);
+        console.warn("axis hole failed", e);
+      }
+    });
+    if (done) cadToast(msg || "Hole cut", true);
+    return done;
+  };
+
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {
     const own =

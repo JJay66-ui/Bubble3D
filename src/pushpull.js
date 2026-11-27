@@ -545,19 +545,33 @@
               const pr0 = prismFromPoints(k, ring, len);
               return k.translate(pr0, 0, 0, yLo - pr.lo);
             }
-            const N = 36,
+            // any direction: build the cylinder from triangles (works in any orientation)
+            const N = 32,
+              len = s1 - s0,
               c0 = center.clone().addScaledVector(d, s0),
-              pts = [];
+              c1 = c0.clone().addScaledVector(d, len);
+            const B = [],
+              T = [];
             for (let i = 0; i < N; i++) {
-              const a = (i / N) * TWO_PI;
-              pts.push(O(c0.clone().addScaledVector(u, Math.cos(a) * rad).addScaledVector(v, Math.sin(a) * rad)));
+              const a = (i / N) * TWO_PI,
+                off = u.clone().multiplyScalar(Math.cos(a) * rad).addScaledVector(v, Math.sin(a) * rad);
+              B.push(O(c0.clone().add(off)));
+              T.push(O(c1.clone().add(off)));
             }
-            const e = pts.map((a, i) => {
-              const b = pts[(i + 1) % N];
-              return k.makeLineEdge(a[0], a[1], a[2], b[0], b[1], b[2]);
-            });
-            const len = s1 - s0;
-            return k.extrude(k.makeFace(k.makeWire(e)), d.x * len, -d.z * len, d.y * len);
+            const C0 = O(c0),
+              C1 = O(c1);
+            const F = [];
+            const tri = (p, q, r2) => F.push(k.buildTriFace(p[0], p[1], p[2], q[0], q[1], q[2], r2[0], r2[1], r2[2]));
+            for (let i = 0; i < N; i++) {
+              const j = (i + 1) % N;
+              tri(C0, B[j], B[i]);
+              tri(C1, T[i], T[j]);
+              tri(B[i], B[j], T[j]);
+              tri(B[i], T[j], T[i]);
+            }
+            const sol = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-6) : k.buildSolidFromFaces(F);
+            if (!sol) throw new Error("cutter solid failed");
+            return sol;
           });
         let out = step("cut core", () => k.cut(host, cyl(r, -0.03, depth)));
         const vol0 = k.getVolume ? Math.abs(k.getVolume(host)) : 1,

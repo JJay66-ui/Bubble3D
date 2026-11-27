@@ -984,7 +984,17 @@
           sz = bb.getSize(new THREE.Vector3()),
           thick = Math.abs(f.n.x) * sz.x + Math.abs(f.n.y) * sz.y + Math.abs(f.n.z) * sz.z;
         if (thick >= 0.1 && -d >= thick - 0.02) {
-          // pushed all the way through: the whole shape goes
+          // pushed all the way through: the whole shape goes, and its volume is cut out of anything it passes through
+          if (nearOf(A).length) {
+            doCarve(A).then((ok) => {
+              if (ok) return;
+              try {
+                if (window.cadBoolMany && window.cadBoolMany(A, nearOf(A), "cut")) return;
+              } catch (e) {}
+              toast("Couldn't cut the hole through the other object: " + carveWhy, false);
+            });
+            return;
+          }
           perform({
             redo() {
               removeFromScene(A);

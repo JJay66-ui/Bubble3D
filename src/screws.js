@@ -178,7 +178,16 @@
   xb.style.cssText = "position:absolute;right:6px;top:4px;width:30px;height:26px;line-height:26px;text-align:center;cursor:pointer;font-size:15px;z-index:2";
   box.style.position = "fixed";
   ["pointerdown", "pointerup", "touchstart", "mousedown"].forEach((t) => xb.addEventListener(t, (e) => e.stopPropagation()));
-  xb.addEventListener("click", (e) => { e.stopPropagation(); closePanel(); });
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "Close";
+  closeBtn.style.cssText = "width:100%;height:32px;border:none;border-radius:10px;background:#3a4150;color:#fff;font-size:12px;margin:2px 0 10px";
+  closeBtn.addEventListener("click", () => closePanel());
+  body.appendChild(closeBtn);
+  const kill = (e) => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); closePanel(); };
+  xb.addEventListener("pointerdown", kill, true);
+  xb.addEventListener("click", kill, true);
+  xb.style.zIndex = "60";
+  box.style.zIndex = "50";
   box.appendChild(xb);
 
   const row = (label, el) => {
@@ -397,5 +406,23 @@
       m.userData.screw.set = true;
       say("Hole cut in " + hosts.length + " object" + (hosts.length > 1 ? "s" : "") + ". The screw can be removed or turned in from either side.", true);
     } else say("Couldn't cut a hole in that object (STL imports and filleted shapes aren't supported yet).", false);
+  }
+
+  // ---- Keep every flyout inside the page ----
+  function fit(f) {
+    if (!f.classList.contains("open")) return;
+    f.style.maxHeight = innerHeight - 16 + "px";
+    f.style.overflowY = "auto";
+    const r = f.getBoundingClientRect();
+    let top = r.top, left = r.left;
+    if (r.bottom > innerHeight - 8) top -= r.bottom - (innerHeight - 8);
+    if (r.right > innerWidth - 8) left -= r.right - (innerWidth - 8);
+    f.style.top = Math.max(8, top) + "px";
+    f.style.left = Math.max(8, left) + "px";
+  }
+  if (typeof flyouts !== "undefined") {
+    const mo = new MutationObserver((l) => l.forEach((m) => fit(m.target)));
+    flyouts.forEach((f) => mo.observe(f, { attributes: true, attributeFilter: ["class"] }));
+    addEventListener("resize", () => flyouts.forEach(fit));
   }
 })();

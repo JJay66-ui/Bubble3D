@@ -223,9 +223,9 @@
     x: { to: (v) => ({ x: v.z, y: v.x, z: v.y }), from: (x, y, z) => [y, z, x] },
     z: { to: (v) => ({ x: v.y, y: v.z, z: v.x }), from: (x, y, z) => [z, x, y] }
   };
-  function prismAnyAxis(m) {
+  function prismAnyAxis(m, only) {
     const T = window.cadTopo(m);
-    for (const ax of ["y", "x", "z"]) {
+    for (const ax of only ? [only] : ["y", "x", "z"]) {
       const A = AXES[ax];
       let lo = Infinity,
         hi = -Infinity;
@@ -380,6 +380,90 @@
     cadToast("OCCT " + kind + " applied to " + edges.length + " edge(s)", true);
     return true;
   }
+
+  // Round hole along the app X or Z axis (side faces) through straight prisms and boxes.
+  // center = app point on the hole axis, r = hole radius, a0..a1 = range along the axis.
+  window.cadSideHole = function (hosts, axis, center, r, a0, a1, msg) {
+    const k = K();
+    if (!k) return 0;
+    const A = AXES[axis];
+    const q = A.to(center);
+    const ring = [];
+    for (let i = 0; i < 48; i++) {
+      const t = (i / 48) * TWO_PI;
+      ring.push([q.x + Math.cos(t) * r, q.z + Math.sin(t) * r]);
+    }
+    let done = 0;
+    hosts.forEach((m) => {
+      try {
+        const pr = prismAnyAxis(m, axis);
+        if (!pr) return;
+        const lo = Math.max(pr.lo, a0),
+          hi = Math.min(pr.lo + pr.H, a1);
+        if (hi - lo < 0.01) return;
+        const host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
+        let tool = step("hole solid", () => prismFromPoints(k, ring, hi - lo));
+        tool = step("hole place", () => k.translate(tool, 0, 0, lo - pr.lo));
+        const out = step("cut", () => k.cut(host, tool));
+        const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
+        const P = new Float32Array(t.indices.length * 3);
+        for (let i = 0; i < t.indices.length; i++) {
+          const j = t.indices[i] * 3;
+          const rr = A.from(t.positions[j], t.positions[j + 2] + pr.lo, -t.positions[j + 1]);
+          P[3 * i] = rr[0];
+          P[3 * i + 1] = rr[1];
+          P[3 * i + 2] = rr[2];
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(P, 3));
+        g.computeVertexNormals();
+        const eg = new THREE.EdgesGeometry(g, 30);
+        const b = {
+          geo: m.geometry,
+          pos: m.position.clone(),
+          scl: m.scale.clone(),
+          quat: m.quaternion.clone(),
+          imp: m.userData.imported,
+          h: m.userData.height,
+          og: m.userData.occtG,
+          eg: m.userData.edges ? m.userData.edges.geometry : null
+        };
+        const apply = () => {
+          m.geometry = g;
+          m.position.set(0, 0, 0);
+          m.scale.set(1, 1, 1);
+          m.quaternion.set(0, 0, 0, 1);
+          m.userData.imported = true;
+          m.userData.height = 0;
+          m.userData.loopPts = null;
+          m.userData.occt = null;
+          m.userData.occtG = { geo: g, s: out, ax: axis, lo: pr.lo, H: pr.H };
+          m.material.side = THREE.DoubleSide;
+          if (m.userData.edges) m.userData.edges.geometry = eg;
+          m.updateMatrixWorld(true);
+        };
+        const revert = () => {
+          m.geometry = b.geo;
+          m.position.copy(b.pos);
+          m.scale.copy(b.scl);
+          m.quaternion.copy(b.quat);
+          m.userData.imported = b.imp;
+          m.userData.height = b.h;
+          m.userData.occtG = b.og;
+          if (m.userData.edges && b.eg) m.userData.edges.geometry = b.eg;
+          m.updateMatrixWorld(true);
+        };
+        apply();
+        undoStack.push({ redo: apply, undo: revert });
+        redoStack.length = 0;
+        done++;
+      } catch (e) {
+        cadToast("Side hole not cut in " + (m.userData.name || "an object") + " (" + (e.message || e) + ")");
+      }
+    });
+    if (done) cadToast(msg || "Hole cut", true);
+    return done;
+  };
 
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {

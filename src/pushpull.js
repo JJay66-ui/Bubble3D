@@ -531,6 +531,20 @@
         const O = (p) => [p.x, -p.z, p.y - pr.lo]; // app point -> kernel point (base of the prism at 0)
         const cyl = (rad, s0, s1) =>
           step("hole solid", () => {
+            if (Math.abs(d.y) > 0.999) {
+              // straight up/down: build it exactly like the other prisms (tries several kernel routes)
+              const ring = [];
+              for (let i = 0; i < 36; i++) {
+                const a = (i / 36) * TWO_PI;
+                ring.push([center.x + Math.cos(a) * rad, center.z + Math.sin(a) * rad]);
+              }
+              const yA = center.y + d.y * s0,
+                yB = center.y + d.y * s1,
+                yLo = Math.min(yA, yB),
+                len = Math.abs(yB - yA);
+              const pr0 = prismFromPoints(k, ring, len);
+              return k.translate(pr0, 0, 0, yLo - pr.lo);
+            }
             const N = 36,
               c0 = center.clone().addScaledVector(d, s0),
               pts = [];

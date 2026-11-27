@@ -95,6 +95,12 @@
   }
   function openPanel() {
     panel.innerHTML = "";
+    const hd = document.createElement("div");
+    hd.dataset.handle = "1";
+    hd.textContent = "\u2630  Drag to move";
+    hd.style.cssText = "padding:2px 0 8px;color:#9aa4b5;font-size:12px;cursor:grab;touch-action:none";
+    panel.appendChild(hd);
+    if (typeof makeDraggable === "function") makeDraggable(panel, hd);
     const row = (...els) => {
       const d = document.createElement("div");
       d.style.cssText = "display:flex;gap:6px;margin:6px 0;align-items:center";

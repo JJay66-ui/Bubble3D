@@ -601,7 +601,32 @@
     const m = cur,
       n = m.userData.screw.n,
       p = m.userData.screw.p;
-    if (Math.abs(n.y) < 0.99) return say("Holes can only be cut for screws pointing straight up or down for now. The screw stays where it is.", false);
+    if (Math.abs(n.y) < 0.99) {
+      // screw pointing sideways along the X or Z axis: cut with the kernel
+      const ax = Math.abs(n.x) > 0.99 ? "x" : Math.abs(n.z) > 0.99 ? "z" : null;
+      if (!ax) return say("Tilted screws can't cut a hole. Press Upright, or turn it to point straight along the grid.", false);
+      if (!window.cadSideHole) return say("pushpull.js is out of date, so side holes can't be cut.", false);
+      const sgn = ax === "x" ? Math.sign(n.x) : Math.sign(n.z);
+      const L2 = Math.max(p.L, p.d);
+      const base = ax === "x" ? m.position.x : m.position.z;
+      const a0 = sgn > 0 ? base - L2 : base,
+        a1 = sgn > 0 ? base : base + L2;
+      const rr = p.d / 2 + Math.max(0, P.fit) / 2;
+      const box = new THREE.Box3(
+        new THREE.Vector3(m.position.x - (ax === "x" ? L2 : rr), m.position.y - rr, m.position.z - (ax === "z" ? L2 : rr)),
+        new THREE.Vector3(m.position.x + (ax === "x" ? L2 : rr), m.position.y + rr, m.position.z + (ax === "z" ? L2 : rr))
+      );
+      const hs = shapes.filter(
+        (s) => s !== m && !s.userData.screw && s.visible !== false && !s.userData.isLine && new THREE.Box3().setFromObject(s).intersectsBox(box)
+      );
+      if (!hs.length) return say("The screw isn't passing through anything yet. Move it into an object or press Flip.", false);
+      const c = await new Promise((res) => res(window.cadSideHole(hs, ax, m.position.clone(), rr, a0 - 0.001, a1 + 0.001, "Hole cut for the screw (gap " + fmt(P.fit) + ")")));
+      if (c) {
+        m.userData.screw.set = true;
+        say("Hole cut in " + c + " object" + (c > 1 ? "s" : "") + ".", true);
+      } else say("Couldn't cut a side hole. It works on boxes and straight extruded shapes.", false);
+      return;
+    }
     if (!window.cadCutHoles) return say("carve.js is missing, so holes can't be cut.", false);
     const top = m.position.y,
       L = Math.max(p.L, p.d);

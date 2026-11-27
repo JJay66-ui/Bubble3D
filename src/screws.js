@@ -151,8 +151,7 @@
       open.innerHTML = svg(k) + "<span>Screws</span>";
       open.classList.add("active");
       fly.classList.remove("open");
-      box.style.display = "block";
-      apply();
+      box.style.display = "none";
       startPlacing();
     });
     typeBtns[k] = b;
@@ -176,9 +175,11 @@
   };
   const xb = document.createElement("span");
   xb.textContent = "\u2715";
-  xb.style.cssText = "float:right;cursor:pointer;padding:0 4px";
-  xb.onclick = closePanel;
-  head.appendChild(xb);
+  xb.style.cssText = "position:absolute;right:6px;top:4px;width:30px;height:26px;line-height:26px;text-align:center;cursor:pointer;font-size:15px;z-index:2";
+  box.style.position = "fixed";
+  ["pointerdown", "pointerup", "touchstart", "mousedown"].forEach((t) => xb.addEventListener(t, (e) => e.stopPropagation()));
+  xb.addEventListener("click", (e) => { e.stopPropagation(); closePanel(); });
+  box.appendChild(xb);
 
   const row = (label, el) => {
     const r = document.createElement("div");
@@ -306,6 +307,9 @@
         }
       });
       cur = s;
+      stopPlacing();
+      box.style.display = "block";
+      open.classList.add("active");
       say(
         Math.abs(n.y) > 0.99
           ? "Screw placed. Change size or length, then press Set to cut the hole."

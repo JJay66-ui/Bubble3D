@@ -679,6 +679,90 @@
     return done;
   };
 
+  // ---------- Real 3D cut: any solid minus any other solid ----------
+  function absSolid(k, m) {
+    const pr = prismAnyAxis(m, "y");
+    if (pr) {
+      let s = prismFromPoints(k, pr.pts, pr.H);
+      if (Math.abs(pr.lo) > 1e-9) s = k.translate(s, 0, 0, pr.lo);
+      return s;
+    }
+    return meshSolid(k, m, AXES.y).s; // already in the app's absolute height
+  }
+  window.cadBoolCut = function (tool, solid) {
+    const k = K();
+    if (!k) return false;
+    const a = step("first solid", () => absSolid(k, solid)),
+      b = step("second solid", () => absSolid(k, tool));
+    const out = step("cut", () => k.cut(a, b));
+    if (k.getVolume && Math.abs(Math.abs(k.getVolume(a)) - Math.abs(k.getVolume(out))) < 1e-5) {
+      cadToast("The two shapes don't overlap, so nothing was cut.", false);
+      return true;
+    }
+    const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
+    const P = new Float32Array(t.indices.length * 3);
+    let hi = -Infinity,
+      lo = Infinity;
+    for (let i = 0; i < t.indices.length; i++) {
+      const j = t.indices[i] * 3;
+      P[3 * i] = t.positions[j];
+      P[3 * i + 1] = t.positions[j + 2];
+      P[3 * i + 2] = -t.positions[j + 1];
+      hi = Math.max(hi, P[3 * i + 1]);
+      lo = Math.min(lo, P[3 * i + 1]);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(
+      g,
+      new THREE.MeshStandardMaterial({
+        color: solid.material.color.getHex(),
+        metalness: 0.1,
+        roughness: 0.6,
+        side: THREE.DoubleSide
+      })
+    );
+    mesh.userData.imported = true;
+    mesh.userData.cutResult = true;
+    mesh.userData.height = 0;
+    mesh.userData.occtG = { geo: g, s: out, ax: "y", lo: 0, H: hi - lo };
+    const eg = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0xffffff }));
+    mesh.add(eg);
+    mesh.userData.edges = eg;
+    perform({
+      redo() {
+        removeFromScene(solid);
+        removeFromScene(tool);
+        tool.visible = false;
+        addToScene(mesh);
+      },
+      undo() {
+        removeFromScene(mesh);
+        tool.visible = true;
+        addToScene(solid);
+        addToScene(tool);
+      }
+    });
+    hideArrow();
+    cadToast("Cut done. Undo brings both shapes back.", true);
+    return true;
+  };
+  if (typeof cutShapes === "function") {
+    const _cut = cutShapes;
+    cutShapes = function (tool, solid) {
+      if (K() && !solid.userData.screw && !tool.userData.screw) {
+        try {
+          if (window.cadBoolCut(tool, solid)) return;
+        } catch (e) {
+          console.warn("3D cut failed", e);
+          cadToast("3D cut failed (" + (e.message || e) + "). Using the simple cut.", false);
+        }
+      }
+      return _cut(tool, solid);
+    };
+  }
+
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {
     const own =

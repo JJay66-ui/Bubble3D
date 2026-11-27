@@ -363,7 +363,7 @@
 
   function doCarve(B) {
     const near = nearOf(B);
-    if (!near.length) return;
+    if (!near.length) return toast("Nothing to cut: no other solid overlaps this shape.", false);
     loadPC()
       .then((pc) => {
         let LB;
@@ -381,7 +381,7 @@
             toast("Couldn't carve " + (A.userData.name || "an object") + " (" + (e.message || e) + ")");
           }
         });
-        if (!ops.length) return;
+        if (!ops.length) return toast("Cut found nothing to remove: the shapes may only touch, or the cut shape couldn't be read.", false);
         // The pushed shape is used up: it disappears, leaving a clean cut (undo brings it back)
         const extra = removePusher
           ? {

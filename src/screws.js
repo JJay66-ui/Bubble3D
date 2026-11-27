@@ -414,10 +414,7 @@
     // use layout values (not animated rects) so the flyout keeps its normal gap from the bar
     const h = f.offsetHeight, w = f.offsetWidth;
     let top = f.offsetTop, left = f.offsetLeft;
-    // stay above the "Cut object" toggle at the bottom
-    let limit = innerHeight - 8;
-    const tgl = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.indexOf("Cut object:") === 0);
-    if (tgl && tgl.offsetParent !== null) limit = Math.min(limit, tgl.getBoundingClientRect().top - 8);
+    const limit = innerHeight - 8;
     if (h > limit - 8) {
       f.style.maxHeight = limit - 8 + "px";
       f.style.overflowY = "auto";

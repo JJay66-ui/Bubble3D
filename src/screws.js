@@ -283,9 +283,18 @@
     ringBtn.textContent = "Rings: " + (ringsOn ? "On" : "Off");
     ringBtn.style.background = ringsOn ? "#2f8cff" : "#3a4150";
   }, "#2f8cff");
+  let follow = true;
+  const followBtn = btn("Follow threads: On", () => {
+    follow = !follow;
+    followBtn.textContent = "Follow threads: " + (follow ? "On" : "Off");
+    followBtn.style.background = follow ? "#2f8cff" : "#3a4150";
+  }, "#2f8cff");
+  const r4 = document.createElement("div");
+  r4.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  r4.append(followBtn);
   r3.append(btn("Upright", () => upright(), "#3a4150"), ringBtn);
   r2.append(btn("Set (cut hole)", setScrew, "#1f9d63"), btn("Delete", del, "#8a2f2f"));
-  body.append(r1, r3, r2, note);
+  body.append(r1, r3, r4, r2, note);
 
   function sync() {
     dIn.value = Math.round(toDisplay(P.d) * 100) / 100;
@@ -383,7 +392,7 @@
       r.visible = !!on;
       if (on) {
         r.position.copy(cur.position);
-        const R = Math.max(P.L, 1.2) * 0.9;
+        const R = Math.max(P.L * 0.75, (P.headD > 0 ? P.headD : P.d * 2) * 1.2, 0.6);
         r.scale.setScalar(R);
         r.material.opacity = drag && drag.ring === r ? 1 : 0.8;
       }
@@ -652,7 +661,36 @@
         new THREE.Box3().setFromObject(s).intersectsBox(sb)
     );
     if (!hosts.length) return say("The screw isn't passing through anything yet, so there is nothing to cut. Move it into an object.", false);
-    const ok = await window.cadCutHoles(hosts, ring, y0 - 0.001, y1 + 0.001, null, "Hole cut for the screw (gap " + fmt(P.fit) + ")");
+    const circ = (rad) => {
+      const o = [];
+      for (let i = 0; i <= 48; i++) {
+        const a = (i / 48) * Math.PI * 2;
+        o.push([m.position.x + Math.cos(a) * rad, m.position.z + Math.sin(a) * rad]);
+      }
+      return o;
+    };
+    let ok;
+    if (follow && p.type !== "set") {
+      // core hole at the thread root, then a groove for every thread ring so the hole follows the threads
+      const gap = Math.max(0, P.fit) / 2,
+        r0 = p.d / 2,
+        tip = Math.min(L / 4, p.d * 0.9),
+        shank = L - tip,
+        pitch = Math.max(p.d * 0.22, 0.02),
+        headH = p.type === "flat" ? p.d * 0.5 : 0,
+        start = p.type === "flat" ? headH : 0.1 * p.d,
+        end = shank + tip * 0.6;
+      ok = await window.cadCutHoles(hosts, circ(r0 * 0.8 + gap), y0 - 0.001, y1 + 0.001, null, "Threaded hole cut");
+      let cnt = 0;
+      for (let y = start + pitch; y < end && cnt < 40 && ok; y += pitch, cnt++) {
+        const yc = n0y(y),
+          h = pitch * 0.5;
+        await window.cadCutHoles(hosts, circ(r0 * (p.type === "wood" ? 1.3 : 1.18) + gap), yc - h / 2, yc + h / 2, null, "Thread groove");
+      }
+      function n0y(y) {
+        return n.y > 0 ? top - y : top + y;
+      }
+    } else ok = await window.cadCutHoles(hosts, ring, y0 - 0.001, y1 + 0.001, null, "Hole cut for the screw (gap " + fmt(P.fit) + ")");
     if (ok) {
       m.userData.screw.set = true;
       say("Hole cut in " + hosts.length + " object" + (hosts.length > 1 ? "s" : "") + ". The screw can be removed or turned in from either side.", true);

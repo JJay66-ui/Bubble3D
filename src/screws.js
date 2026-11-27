@@ -634,7 +634,7 @@
       if (c) {
         m.userData.screw.set = true;
         say("Hole cut in " + c + " object" + (c > 1 ? "s" : "") + ".", true);
-      } else say("Couldn't cut a side hole. It works on boxes and straight extruded shapes.", false);
+      } else say("Couldn't cut a side hole: " + (window.cadSideHoleWhy || "unknown reason"), false);
       return;
     }
     if (!window.cadCutHoles) return say("carve.js is missing, so holes can't be cut.", false);

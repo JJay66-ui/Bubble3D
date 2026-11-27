@@ -560,17 +560,40 @@
             }
             const C0 = O(c0),
               C1 = O(c1);
-            const F = [];
-            const tri = (p, q, r2) => F.push(k.buildTriFace(p[0], p[1], p[2], q[0], q[1], q[2], r2[0], r2[1], r2[2]));
-            for (let i = 0; i < N; i++) {
-              const j = (i + 1) % N;
-              tri(C0, B[j], B[i]);
-              tri(C1, T[i], T[j]);
-              tri(B[i], B[j], T[j]);
-              tri(B[i], T[j], T[i]);
+            const want = 0.5 * N * rad * rad * Math.sin(TWO_PI / N) * len;
+            const make = (flip) => {
+              const F = [];
+              const tri = (p, q, r2) =>
+                flip
+                  ? F.push(k.buildTriFace(p[0], p[1], p[2], r2[0], r2[1], r2[2], q[0], q[1], q[2]))
+                  : F.push(k.buildTriFace(p[0], p[1], p[2], q[0], q[1], q[2], r2[0], r2[1], r2[2]));
+              for (let i = 0; i < N; i++) {
+                const j = (i + 1) % N;
+                tri(C0, B[j], B[i]);
+                tri(C1, T[i], T[j]);
+                tri(B[i], B[j], T[j]);
+                tri(B[i], T[j], T[i]);
+              }
+              return typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-6) : k.buildSolidFromFaces(F);
+            };
+            let sol = null,
+              why = "";
+            for (const flip of [false, true]) {
+              try {
+                const c = make(flip);
+                if (!c) continue;
+                const sv = k.getVolume ? k.getVolume(c) : want;
+                const vol = Math.abs(sv);
+                if (sv > 0 && Math.abs(vol - want) / want < 0.05) {
+                  sol = c;
+                  break;
+                }
+                why = "cutter volume " + vol.toFixed(4) + " vs " + want.toFixed(4);
+              } catch (e) {
+                why = e.message || String(e);
+              }
             }
-            const sol = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-6) : k.buildSolidFromFaces(F);
-            if (!sol) throw new Error("cutter solid failed");
+            if (!sol) throw new Error("cutter solid failed (" + why + ")");
             return sol;
           });
         let out = step("cut core", () => k.cut(host, cyl(r, -0.03, depth)));

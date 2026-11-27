@@ -625,6 +625,41 @@
     const m = cur,
       n = m.userData.screw.n,
       p = m.userData.screw.p;
+    // Preferred route: cut with the kernel in the screw's own direction (any angle, with threads)
+    if (window.cadAxisHole) {
+      const L0 = Math.max(p.L, p.d),
+        dirIn = n.clone().negate(),
+        rr0 = p.d / 2 + Math.max(0, P.fit) / 2;
+      const end0 = m.position.clone().addScaledVector(dirIn, L0);
+      const bx = new THREE.Box3().setFromPoints([m.position, end0]).expandByScalar(rr0 * 1.3);
+      const hs0 = shapes.filter(
+        (s) => s !== m && !s.userData.screw && s.visible !== false && !s.userData.isLine && new THREE.Box3().setFromObject(s).intersectsBox(bx)
+      );
+      if (!hs0.length) return say("The screw isn't passing through anything yet. Move it into an object or press Flip.", false);
+      const gap0 = Math.max(0, P.fit) / 2,
+        r00 = p.d / 2;
+      let core = rr0,
+        grooves = [];
+      if (follow && p.type !== "set") {
+        const tip0 = Math.min(L0 / 4, p.d * 0.9),
+          shank0 = L0 - tip0,
+          pitch0 = Math.max(p.d * 0.3, 0.02),
+          start0 = p.type === "flat" ? p.d * 0.5 : 0.1 * p.d,
+          end1 = shank0 + tip0 * 0.6;
+        core = r00 * 0.78 + gap0;
+        const rg0 = r00 * (p.type === "wood" ? 1.35 : 1.2) + gap0;
+        for (let y = start0 + pitch0, c = 0; y < end1 && c < 40; y += pitch0, c++)
+          grooves.push({ s0: y - pitch0 * 0.25, s1: y + pitch0 * 0.25, r: rg0 });
+      }
+      const c0 = window.cadAxisHole(hs0, m.position.clone(), dirIn, core, L0, grooves, "Hole cut for the screw" + (grooves.length ? " with threads" : ""));
+      if (c0) {
+        m.userData.screw.set = true;
+        m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
+        say("Hole cut in " + c0 + " object" + (c0 > 1 ? "s" : "") + (grooves.length ? " with thread grooves." : "."), true);
+        return;
+      }
+      window.cadAxisWhy = window.cadAxisHoleWhy;
+    }
     if (Math.abs(n.y) < 0.99) {
       // screw pointing sideways along the X or Z axis: cut with the kernel
       const ax = Math.abs(n.x) > 0.99 ? "x" : Math.abs(n.z) > 0.99 ? "z" : null;
@@ -649,7 +684,7 @@
         m.userData.screw.set = true;
         m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
         say("Hole cut in " + c + " object" + (c > 1 ? "s" : "") + ".", true);
-      } else say("Couldn't cut a side hole: " + (window.cadSideHoleWhy || "unknown reason"), false);
+      } else say("Couldn't cut a side hole: " + (window.cadAxisWhy || window.cadSideHoleWhy || "unknown reason"), false);
       return;
     }
     if (!window.cadCutHoles) return say("carve.js is missing, so holes can't be cut.", false);

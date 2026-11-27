@@ -12,6 +12,7 @@
   const note = document.createElement("div");
   note.style.cssText = "padding:0 10px 8px;color:#9aa4b5;font-size:11px;min-height:14px";
   wrap.append(head, grid, note);
+  wrap.dataset.dragkey = "nudge";
   document.body.appendChild(wrap);
   if (typeof makeDraggable === "function") makeDraggable(wrap, head);
 

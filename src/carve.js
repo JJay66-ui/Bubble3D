@@ -1107,14 +1107,17 @@
     const A = P.f.mesh;
     if (keep) return commitFace(P.f, P.d); // keep the object: the drag is applied as normal
     // delete the object, and cut its shape out of whatever it intersects
+    let throughWhy = "";
     const axk = ["x", "y", "z"].reduce((m, k) => (Math.abs(P.f.n[k]) > Math.abs(P.f.n[m]) ? k : m), "x");
     try {
       // straight through the whole other object, in the direction you pushed
       if (nearOf(A).length && window.cadBoolMany && window.cadBoolMany(A, nearOf(A), "cut", { ax: axk, through: true })) return;
     } catch (e) {
-      carveWhy = "through-cut: " + (e.message || e);
+      throughWhy = "through-cut: " + (e.message || e);
     }
     if (nearOf(A).length && (await doCarve(A))) return;
+    const had = nearOf(A).length,
+      whyCut = throughWhy + (throughWhy ? " | " : "") + carveWhy;
     perform({
       redo() {
         removeFromScene(A);
@@ -1124,7 +1127,7 @@
         addToScene(A);
       }
     });
-    toast("Object deleted. Undo brings it back.", true);
+    toast(had ? "Object deleted, but the hole could NOT be cut: " + whyCut : "Object deleted. Undo brings it back.", !had);
   }
   function askPulled(f, d) {
     ppPending = { f, d };

@@ -683,7 +683,7 @@
       if (c) {
         m.userData.screw.set = true;
         m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
-        say("Hole cut in " + c + " object" + (c > 1 ? "s" : "") + ".", true);
+        say("Plain hole only, no threads (" + (window.cadAxisWhy || "kernel route not used") + ").", true);
       } else say("Couldn't cut a side hole: " + (window.cadAxisWhy || window.cadSideHoleWhy || "unknown reason"), false);
       return;
     }
@@ -757,7 +757,7 @@
     if (ok) {
       m.userData.screw.set = true;
       m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
-      say("Hole cut in " + hosts.length + " object" + (hosts.length > 1 ? "s" : "") + ". The screw can be removed or turned in from either side.", true);
+      say("Plain hole only, no threads (" + (window.cadAxisWhy || "kernel route not used") + ").", true);
     } else say("Couldn't cut a hole in that object (STL imports and filleted shapes aren't supported yet).", false);
   }
 

@@ -366,6 +366,12 @@
 #b3home .pb{height:52px;padding:0 28px;border-radius:26px;font-size:17px;font-weight:600;color:#fff;border:1px solid rgba(255,255,255,.22);
   background:rgba(255,255,255,.08);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);cursor:pointer}
 #b3home .pb.main{background:linear-gradient(180deg,#4db2ff,#1f7be6);border-color:rgba(255,255,255,.4);box-shadow:0 8px 28px rgba(40,140,255,.45)}
+#b3home .pb.cont{display:flex;align-items:center;gap:14px;height:auto;padding:10px 22px 10px 10px;border-radius:30px;border:2px solid rgba(255,255,255,.45);
+  background:rgba(255,255,255,.1);min-width:min(430px,100%);text-align:left;box-shadow:0 10px 34px rgba(0,0,0,.35)}
+#b3home .pb.cont .ct{width:128px;height:80px;border-radius:20px;flex:none;background:#0a1220 center/cover no-repeat;border:1px solid rgba(255,255,255,.25)}
+#b3home .pb.cont .tx{display:flex;flex-direction:column;gap:3px;min-width:0}
+#b3home .pb.cont .lb{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#8fc8ff;font-weight:600}
+#b3home .pb.cont .pn{font-size:20px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
 #b3home h2{font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:#7f9fc2;margin:44px 0 14px;text-align:left;font-weight:600}
 #b3home .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;text-align:left}
 #b3home .card{border-radius:18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);overflow:hidden;
@@ -425,8 +431,8 @@
   bBack.className = "pb";
   bBack.onclick = () => hideHome();
   const bLast = document.createElement("button");
-  bLast.className = "pb";
-  row.append(bNew, bBack, bLast);
+  bLast.className = "pb cont";
+  row.append(bNew, bLast, bBack);
   const h2 = document.createElement("h2");
   h2.textContent = "Your projects";
   const grid = document.createElement("div");
@@ -501,8 +507,6 @@
       grid.appendChild(c);
     });
     // buttons
-    bBack.style.display = hasWork() || cur ? "" : "none";
-    bBack.textContent = cur ? "↩ Back to “" + cur.name + "”" : "↩ Back to canvas";
     const last = (() => {
       try {
         return localStorage.getItem("bubble3d.last");
@@ -511,11 +515,29 @@
       }
     })();
     const lp = list.find((p) => p.id === last);
-    bLast.style.display = lp && !(cur && cur.id === lp.id) ? "" : "none";
-    if (lp) {
-      bLast.textContent = "Continue “" + lp.name + "”";
-      bLast.onclick = () => openProject(lp.id);
-    }
+    let info = null;
+    if (cur) info = { label: "Back to project", name: cur.name, img: thumb(), go: () => hideHome() };
+    else if (lp) info = { label: "Continue", name: lp.name, img: lp.thumb, go: () => openProject(lp.id) };
+    bBack.style.display = !cur && hasWork() ? "" : "none";
+    bBack.textContent = "\u21a9 Back to canvas";
+    if (info) {
+      bLast.style.display = "";
+      bLast.innerHTML = "";
+      const im2 = document.createElement("div");
+      im2.className = "ct";
+      if (info.img) im2.style.backgroundImage = "url(" + info.img + ")";
+      const tx = document.createElement("div");
+      tx.className = "tx";
+      const lb = document.createElement("div");
+      lb.className = "lb";
+      lb.textContent = info.label;
+      const pn = document.createElement("div");
+      pn.className = "pn";
+      pn.textContent = info.name;
+      tx.append(lb, pn);
+      bLast.append(im2, tx);
+      bLast.onclick = info.go;
+    } else bLast.style.display = "none";
   }
   function showHome() {
     home.style.display = "block";

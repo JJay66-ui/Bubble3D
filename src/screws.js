@@ -332,6 +332,7 @@
   const drawing = () => tool === "line" || tool === "rect" || tool === "circle";
 
   // select an existing screw and load its size into the panel
+  window.cadPickScrew = (m) => pick(m);
   function pick(m) {
     cur = m;
     const p = m.userData.screw.p;
@@ -680,16 +681,28 @@
         headH = p.type === "flat" ? p.d * 0.5 : 0,
         start = p.type === "flat" ? headH : 0.1 * p.d,
         end = shank + tip * 0.6;
-      ok = await window.cadCutHoles(hosts, circ(r0 * 0.8 + gap), y0 - 0.001, y1 + 0.001, null, "Threaded hole cut");
-      let cnt = 0;
-      for (let y = start + pitch; y < end && cnt < 40 && ok; y += pitch, cnt++) {
-        const yc = n0y(y),
-          h = pitch * 0.5;
-        await window.cadCutHoles(hosts, circ(r0 * (p.type === "wood" ? 1.3 : 1.18) + gap), yc - h / 2, yc + h / 2, null, "Thread groove");
+      // bands from the bottom of the hole to the top: thin core radius, wider radius where a thread ring sits
+      const rc = r0 * 0.8 + gap,
+        rg = r0 * (p.type === "wood" ? 1.3 : 1.18) + gap,
+        hh = pitch * 0.5,
+        yz = (y) => (n.y > 0 ? top - y : top + y);
+      const gro = [];
+      for (let y = start + pitch, c = 0; y < end && c < 60; y += pitch, c++) {
+        const a1 = yz(y) - hh / 2,
+          a2 = yz(y) + hh / 2;
+        gro.push([Math.max(y0, a1), Math.min(y1, a2)]);
       }
-      function n0y(y) {
-        return n.y > 0 ? top - y : top + y;
-      }
+      gro.sort((u, v) => u[0] - v[0]);
+      const bands = [];
+      let cy = y0 - 0.001;
+      gro.forEach(([g0, g1]) => {
+        if (g1 - g0 < 1e-4) return;
+        if (g0 > cy + 1e-4) bands.push({ ring: circ(rc), y0: cy, y1: g0 });
+        bands.push({ ring: circ(rg), y0: g0, y1: g1 });
+        cy = g1;
+      });
+      if (y1 + 0.001 > cy + 1e-4) bands.push({ ring: circ(rc), y0: cy, y1: y1 + 0.001 });
+      ok = await window.cadCutHoles(hosts, bands, 0, 0, null, "Threaded hole cut");
     } else ok = await window.cadCutHoles(hosts, ring, y0 - 0.001, y1 + 0.001, null, "Hole cut for the screw (gap " + fmt(P.fit) + ")");
     if (ok) {
       m.userData.screw.set = true;
@@ -718,5 +731,25 @@
     const mo = new MutationObserver((l) => l.forEach((m) => fit(m.target)));
     flyouts.forEach((f) => f !== fly && mo.observe(f, { attributes: true, attributeFilter: ["class"] }));
     addEventListener("resize", () => flyouts.forEach((f) => (f === fly ? placeFly() : fit(f))));
+  }
+
+  // A screw is never stretched by the height arrow
+  if (typeof setHeight === "function") {
+    const _sh = setHeight;
+    setHeight = function (m) {
+      if (m && m.userData && m.userData.screw) return;
+      return _sh.apply(this, arguments);
+    };
+  }
+  if (typeof showArrow === "function") {
+    const _sa = showArrow;
+    showArrow = function (m) {
+      if (m && m.userData && m.userData.screw) {
+        if (typeof hideArrow === "function") hideArrow();
+        pick(m);
+        return;
+      }
+      return _sa.apply(this, arguments);
+    };
   }
 })();

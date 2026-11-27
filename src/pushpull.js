@@ -494,12 +494,18 @@
       const nn = A.to(t.n);
       tmp1.subVectors(b, a);
       tmp2.subVectors(c, a);
-      if (tmp1.cross(tmp2).dot(new THREE.Vector3(nn.x, nn.y, nn.z)) < 0) [b, c] = [c, b];
+      const cr = tmp1.clone().cross(tmp2);
+      if (cr.length() < 1e-8 || tmp1.length() < 1e-5 || tmp2.length() < 1e-5) return; // skip zero-size triangles
+      if (cr.dot(new THREE.Vector3(nn.x, nn.y, nn.z)) < 0) [b, c] = [c, b];
       [a, b, c].forEach((p) => ((hi = Math.max(hi, p.y)), (lo = Math.min(lo, p.y))));
       const pa = [a.x, -a.z, a.y],
         pb = [b.x, -b.z, b.y],
         pc2 = [c.x, -c.z, c.y];
-      F.push(k.buildTriFace(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], pc2[0], pc2[1], pc2[2]));
+      try {
+        F.push(k.buildTriFace(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], pc2[0], pc2[1], pc2[2]));
+      } catch (e) {
+        /* a bad sliver triangle: leave it out */
+      }
     });
     const sew = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-5) : k.buildSolidFromFaces(F);
     if (!sew) throw new Error("couldn't rebuild the solid from the mesh");
@@ -692,6 +698,7 @@
   window.cadBoolCut = function (tool, solid) {
     const k = K();
     if (!k) return false;
+    if (Math.abs(tool.userData.height || 0) < 0.05 && !tool.userData.imported) throw new Error("the cutting shape is still flat: extrude it first");
     const a = step("first solid", () => absSolid(k, solid)),
       b = step("second solid", () => absSolid(k, tool));
     const out = step("cut", () => k.cut(a, b));
@@ -748,6 +755,83 @@
     cadToast("Cut done. Undo brings both shapes back.", true);
     return true;
   };
+  // Used by the pop-up after extruding into other objects.
+  //   mode "cut":   the extruded shape is an invisible cutter. It carves every object it overlaps, then disappears.
+  //   mode "merge": the extruded shape and everything it overlaps become one object.
+  function meshOf(k, out, color) {
+    const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
+    const P = new Float32Array(t.indices.length * 3);
+    let hi = -Infinity,
+      lo = Infinity;
+    for (let i = 0; i < t.indices.length; i++) {
+      const j = t.indices[i] * 3;
+      P[3 * i] = t.positions[j];
+      P[3 * i + 1] = t.positions[j + 2];
+      P[3 * i + 2] = -t.positions[j + 1];
+      hi = Math.max(hi, P[3 * i + 1]);
+      lo = Math.min(lo, P[3 * i + 1]);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, metalness: 0.1, roughness: 0.6, side: THREE.DoubleSide }));
+    mesh.userData.imported = true;
+    mesh.userData.cutResult = true;
+    mesh.userData.height = 0;
+    mesh.userData.occtG = { geo: g, s: out, ax: "y", lo: 0, H: hi - lo };
+    const eg = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0xffffff }));
+    mesh.add(eg);
+    mesh.userData.edges = eg;
+    return mesh;
+  }
+  window.cadBoolMany = function (B, hosts, mode) {
+    const k = K();
+    if (!k) throw new Error("the shape engine isn't loaded yet");
+    hosts = hosts.filter((h) => h !== B && !h.userData.screw);
+    if (!hosts.length) return true;
+    const tool = step("extruded shape", () => absSolid(k, B));
+    const removed = [],
+      added = [];
+    if (mode === "merge") {
+      const fuse = k.fuse || k.union || k.fuseShapes;
+      if (typeof fuse !== "function") throw new Error("this kernel has no join operation");
+      let out = tool;
+      hosts.forEach((h) => {
+        out = step("merge", () => fuse.call(k, out, absSolid(k, h)));
+      });
+      removed.push(B, ...hosts);
+      added.push(meshOf(k, out, hosts[0].material.color.getHex()));
+    } else {
+      hosts.forEach((h) => {
+        const a = absSolid(k, h);
+        const out = step("cut", () => k.cut(a, tool));
+        if (k.getVolume && Math.abs(Math.abs(k.getVolume(a)) - Math.abs(k.getVolume(out))) < 1e-5) return;
+        removed.push(h);
+        added.push(meshOf(k, out, h.material.color.getHex()));
+      });
+      if (!added.length) {
+        cadToast("Nothing to cut: the shapes only touch.", false);
+        return true;
+      }
+      removed.push(B); // the extruded shape is used up
+    }
+    perform({
+      redo() {
+        removed.forEach((o) => removeFromScene(o));
+        B.visible = false;
+        added.forEach((o) => addToScene(o));
+      },
+      undo() {
+        added.forEach((o) => removeFromScene(o));
+        B.visible = true;
+        removed.forEach((o) => addToScene(o));
+      }
+    });
+    hideArrow();
+    cadToast(mode === "merge" ? "Merged into one object. Undo to split them again." : "Cut done. The extruded shape is gone. Undo brings it back.", true);
+    return true;
+  };
+
   if (typeof cutShapes === "function") {
     const _cut = cutShapes;
     cutShapes = function (tool, solid) {

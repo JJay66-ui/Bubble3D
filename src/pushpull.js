@@ -487,6 +487,7 @@
       lo = Infinity;
     const seenTri = new Set(),
       edgeCt = new Map();
+    let triErr = null;
     T.tris.forEach((t) => {
       if (t.face === -2) return;
       let [a, b, c] = t.v.map((p) => {
@@ -517,7 +518,7 @@
       try {
         F.push(k.buildTriFace(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], pc2[0], pc2[1], pc2[2]));
       } catch (e) {
-        /* a bad sliver triangle: leave it out */
+        triErr = triErr || e;
       }
     });
     let sew = null,
@@ -538,7 +539,7 @@
         if (!edgeCt.has(q + ">" + p)) open++;
       });
       throw new Error(
-        (sewErr ? sewErr.message : "sewing failed") + " [" + F.length + " triangles, " + open + " open edges" + (open ? ": the object has gaps or T-junctions" : "") + "]"
+        (sewErr ? sewErr.message : "sewing failed") + " [mesh " + T.tris.length + " tris, built " + F.length + (triErr ? ", tri error: " + (triErr.message || triErr) : "") + ", " + open + " open edges" + (open ? ": the object has gaps or T-junctions" : "") + "]"
       );
     }
     if (!sew) throw new Error("couldn't rebuild the solid from the mesh");

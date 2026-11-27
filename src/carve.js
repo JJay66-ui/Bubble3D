@@ -813,7 +813,11 @@
     const ops = [];
     hosts.forEach((A) => {
       try {
-        const res = subtractLayers(pc, layersOf(A), [{ mp: [[ring]], y0, y1 }]);
+        const cutters =
+          Array.isArray(ring) && ring.length && ring[0].ring
+            ? ring.map((b) => ({ mp: [[b.ring]], y0: b.y0, y1: b.y1 })) // several bands in one cut
+            : [{ mp: [[ring]], y0, y1 }];
+        const res = subtractLayers(pc, layersOf(A), cutters);
         if (res) ops.push(makeOp(A, res));
       } catch (e) {
         toast("Couldn't cut " + (A.userData.name || "an object") + " (" + (e.message || e) + ")");

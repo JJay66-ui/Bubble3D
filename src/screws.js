@@ -802,6 +802,19 @@
     addEventListener("resize", () => flyouts.forEach((f) => (f === fly ? placeFly() : fit(f))));
   }
 
+
+  // used by project loading
+  window.cadRestoreScrew = function (rec) {
+    const keep = Object.assign({}, P);
+    Object.assign(P, rec.p || {});
+    const s = make(new V3().fromArray(rec.pos), new V3().fromArray(rec.n));
+    s.quaternion.fromArray(rec.quat);
+    setN(s);
+    s.userData.screw.set = !!rec.set;
+    if (rec.home) s.userData.screw.home = { p: new V3().fromArray(rec.home.p), q: new THREE.Quaternion().fromArray(rec.home.q) };
+    Object.assign(P, keep);
+    return s;
+  };
   // A screw is never stretched by the height arrow
   if (typeof setHeight === "function") {
     const _sh = setHeight;

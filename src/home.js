@@ -224,17 +224,61 @@
     refreshList();
   }
 
+  // Clean, high-resolution picture of only the project's objects (no grid or plate), framed to fit
   function thumb() {
+    const objs = [...shapes, ...lines].filter((o) => o.visible !== false);
+    if (!objs.length) return "";
+    const set = new Set([...shapes, ...lines]);
+    const hidden = [];
+    const old = {
+      pos: camera.position.clone(),
+      aspect: camera.aspect,
+      pr: renderer.getPixelRatio(),
+      size: renderer.getSize(new THREE.Vector2()),
+      bg: scene.background,
+      clearA: renderer.getClearAlpha(),
+      clearC: renderer.getClearColor(new THREE.Color())
+    };
     try {
+      const box = new THREE.Box3();
+      objs.forEach((o) => box.union(new THREE.Box3().setFromObject(o)));
+      if (box.isEmpty()) return "";
+      scene.children.forEach((c) => {
+        if (!set.has(c) && !c.isLight && c.visible) {
+          c.visible = false;
+          hidden.push(c);
+        }
+      });
+      const W = 1200,
+        H = 750;
+      renderer.setPixelRatio(1);
+      renderer.setSize(W, H, false);
+      camera.aspect = W / H;
+      camera.updateProjectionMatrix();
+      const ctr = box.getCenter(new THREE.Vector3()),
+        r = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+      const dir = new V3(Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw));
+      const fv = (camera.fov * Math.PI) / 180,
+        fh = 2 * Math.atan(Math.tan(fv / 2) * camera.aspect);
+      const d = (r / Math.sin(Math.min(fv, fh) / 2)) * 1.12;
+      camera.position.copy(ctr).addScaledVector(dir, d);
+      camera.lookAt(ctr);
+      scene.background = null;
+      renderer.setClearColor(0x000000, 0);
       renderer.render(scene, camera);
-      const c = renderer.domElement,
-        t = document.createElement("canvas");
-      t.width = 360;
-      t.height = Math.max(1, Math.round((360 * c.height) / c.width));
-      t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
-      return t.toDataURL("image/jpeg", 0.72);
+      return renderer.domElement.toDataURL("image/png");
     } catch (e) {
       return "";
+    } finally {
+      hidden.forEach((c) => (c.visible = true));
+      renderer.setPixelRatio(old.pr);
+      renderer.setSize(old.size.x, old.size.y);
+      camera.aspect = old.aspect;
+      camera.updateProjectionMatrix();
+      updateCamera();
+      scene.background = old.bg;
+      renderer.setClearColor(old.clearC, old.clearA);
+      renderer.render(scene, camera);
     }
   }
 
@@ -376,7 +420,7 @@
 #b3home .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;text-align:left}
 #b3home .card{border-radius:18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);overflow:hidden;
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-#b3home .card .im{aspect-ratio:16/10;background:#0a1220 center/cover no-repeat;cursor:pointer}
+#b3home .card .im{aspect-ratio:16/10;background:radial-gradient(ellipse at 50% 30%,#16314f,#0a1220) center/contain no-repeat;background-color:#0b1626;cursor:pointer}
 #b3home .card .nm{padding:10px 12px 2px;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #b3home .card .dt{padding:0 12px;color:#8ba5c4;font-size:12px}
 #b3home .card .ac{display:flex;gap:6px;padding:8px 10px 10px}
@@ -432,7 +476,7 @@
   bBack.onclick = () => hideHome();
   const bLast = document.createElement("button");
   bLast.className = "pb cont";
-  row.append(bNew, bLast, bBack);
+  row.append(bNew, bBack);
   const h2 = document.createElement("h2");
   h2.textContent = "Your projects";
   const grid = document.createElement("div");
@@ -507,37 +551,8 @@
       grid.appendChild(c);
     });
     // buttons
-    const last = (() => {
-      try {
-        return localStorage.getItem("bubble3d.last");
-      } catch (e) {
-        return null;
-      }
-    })();
-    const lp = list.find((p) => p.id === last);
-    let info = null;
-    if (cur) info = { label: "Back to project", name: cur.name, img: thumb(), go: () => hideHome() };
-    else if (lp) info = { label: "Continue", name: lp.name, img: lp.thumb, go: () => openProject(lp.id) };
-    bBack.style.display = !cur && hasWork() ? "" : "none";
+    bBack.style.display = hasWork() && !cur ? "" : "none";
     bBack.textContent = "\u21a9 Back to canvas";
-    if (info) {
-      bLast.style.display = "";
-      bLast.innerHTML = "";
-      const im2 = document.createElement("div");
-      im2.className = "ct";
-      if (info.img) im2.style.backgroundImage = "url(" + info.img + ")";
-      const tx = document.createElement("div");
-      tx.className = "tx";
-      const lb = document.createElement("div");
-      lb.className = "lb";
-      lb.textContent = info.label;
-      const pn = document.createElement("div");
-      pn.className = "pn";
-      pn.textContent = info.name;
-      tx.append(lb, pn);
-      bLast.append(im2, tx);
-      bLast.onclick = info.go;
-    } else bLast.style.display = "none";
   }
   function showHome() {
     home.style.display = "block";

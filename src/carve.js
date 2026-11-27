@@ -817,12 +817,71 @@
       if (b.isEmpty() || o1.some((k) => b.max[k] < me.min[k] + 0.01 || b.min[k] > me.max[k] - 0.01)) return;
       [b.min[ax], b.max[ax]].forEach((q) => {
         const t = (q - p) * sg;
-        if (Math.abs(t) > 0.02) res.push(t);
+        if (Math.abs(t) > 0.02) res.push({ t, o: s, q, ax, me });
       });
     });
     return res;
   }
 
+  // Green glow + see-through when the pushed face is flush with another object
+  let glowMesh = null,
+    glowObj = null,
+    glowOld = null;
+  function flushGlow(h) {
+    if (!h || (glowObj && glowObj !== h.o)) {
+      if (glowMesh) glowMesh.visible = false;
+      if (glowObj && glowOld) {
+        glowObj.material.transparent = glowOld.t;
+        glowObj.material.opacity = glowOld.o;
+        glowObj.material.needsUpdate = true;
+      }
+      glowObj = null;
+      glowOld = null;
+      if (!h) return;
+    }
+    const ob = new THREE.Box3().setFromObject(h.o),
+      ax = h.ax,
+      o1 = ["x", "y", "z"].filter((k) => k !== ax),
+      lo = {},
+      hi = {};
+    o1.forEach((k) => {
+      lo[k] = Math.max(ob.min[k], h.me.min[k]);
+      hi[k] = Math.min(ob.max[k], h.me.max[k]);
+    });
+    if (!glowMesh) {
+      glowMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthTest: false })
+      );
+      glowMesh.renderOrder = 999;
+      scene.add(glowMesh);
+    }
+    glowMesh.rotation.set(0, 0, 0);
+    if (ax === "x") glowMesh.rotation.y = Math.PI / 2;
+    else if (ax === "y") glowMesh.rotation.x = -Math.PI / 2;
+    const [u, w] = o1,
+      su = Math.max(hi[u] - lo[u], 0.01),
+      sw = Math.max(hi[w] - lo[w], 0.01);
+    // plane's local x/y map to the two other axes in order
+    const pos = { x: 0, y: 0, z: 0 };
+    pos[ax] = h.q;
+    pos[u] = (lo[u] + hi[u]) / 2;
+    pos[w] = (lo[w] + hi[w]) / 2;
+    glowMesh.position.set(pos.x, pos.y, pos.z);
+    const sz = { x: 1, y: 1, z: 1 };
+    // PlaneGeometry spans local X,Y; after rotation, X axis -> first of (u,w) for y/x cases
+    if (ax === "y") glowMesh.scale.set(hi.x - lo.x || 0.01, hi.z - lo.z || 0.01, 1);
+    else if (ax === "x") glowMesh.scale.set(hi.z - lo.z || 0.01, hi.y - lo.y || 0.01, 1);
+    else glowMesh.scale.set(hi.x - lo.x || 0.01, hi.y - lo.y || 0.01, 1);
+    glowMesh.visible = true;
+    if (!glowObj) {
+      glowObj = h.o;
+      glowOld = { t: h.o.material.transparent, o: h.o.material.opacity };
+      h.o.material.transparent = true;
+      h.o.material.opacity = 0.45;
+      h.o.material.needsUpdate = true;
+    }
+  }
   addEventListener(
     "pointermove",
     (e) => {
@@ -832,32 +891,33 @@
       if (Math.abs(d0) > 0.05) fdrag.moved = true;
       let dd = fdrag.base && !fdrag.moved ? fdrag.base : Math.round((fdrag.base + d0) * 4) / 4;
       const fl = flushStops();
-      let held = false;
+      let held = null;
       if (!(fdrag.base && !fdrag.moved) && fl.length) {
         const sg = dd < 0 ? -1 : 1;
         let a = Math.abs(dd),
           out = a;
-        fl.filter((s) => s * sg > 0.01)
-          .map((s) => Math.abs(s))
-          .sort((x, y) => x - y)
+        fl.filter((s) => s.t * sg > 0.01)
+          .map((s) => ({ ...s, t: Math.abs(s.t) }))
+          .sort((x, y) => x.t - y.t)
           .forEach((s) => {
-            if (a >= s && a <= s + FLUSH_Z) {
-              out = s + (out - a); // stuck at the flush plane
-              held = true;
-              out = s;
-            } else if (a > s + FLUSH_Z) out = a - FLUSH_Z;
+            if (a >= s.t && a <= s.t + FLUSH_Z) {
+              out = s.t;
+              held = s;
+            } else if (a > s.t + FLUSH_Z) out = a - FLUSH_Z;
           });
         dd = sg * out;
       }
+      flushGlow(held);
       fdrag.d = dd;
       showPreview(fdrag.d);
-      showMeasure(held ? "Flush with the other object" : (fdrag.d >= 0 ? "Push out: " : "Push in: ") + fmt(Math.abs(fdrag.d)));
+      showMeasure(held ? "Flush: surfaces meet" : (fdrag.d >= 0 ? "Push out: " : "Push in: ") + fmt(Math.abs(fdrag.d)));
       e.stopImmediatePropagation();
     },
     true
   );
   const endFace = (commit) => (e) => {
     if (!fdrag || e.pointerId !== fdrag.id) return;
+    flushGlow(null);
     const d = fdrag.d,
       f = cur && cur.f;
     fdrag = null;

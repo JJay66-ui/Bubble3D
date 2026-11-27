@@ -551,7 +551,7 @@
     grid.visible = show;
     if (!sk && !(typeof mode !== "undefined" && mode === "arrow")) {
       shapes.forEach((m) => {
-        if (!m.visible || m.userData.isLine) return;
+        if (!m.visible || m.userData.isLine || m.userData.screw) return;
         const lo = new THREE.Box3().setFromObject(m).min.y;
         if (lo < -0.01 && lo > -500) m.position.y -= lo; // the plate is zero: nothing sits below it
       });

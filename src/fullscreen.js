@@ -37,7 +37,8 @@
 
   const root = document.documentElement;
   const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
-  const standalone = () => navigator.standalone === true || matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+  // installed home-screen app (no browser bars at all); ordinary full screen does not count
+  const standalone = () => !isFull() && (navigator.standalone === true || matchMedia("(display-mode: standalone)").matches);
   let warned = false;
   function enter() {
     const f = root.requestFullscreen || root.webkitRequestFullscreen;
@@ -71,7 +72,11 @@
     "position:fixed;right:130px;top:10px;z-index:9;width:40px;height:40px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(28,31,38,.6);color:#fff;font-size:20px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)";
   b.onclick = toggle;
   document.body.appendChild(b);
-  const sync = () => (b.style.display = standalone() ? "none" : "block");
+  const sync = () => {
+    b.style.display = standalone() ? "none" : "block";
+    b.textContent = isFull() ? "\u2715" : "\u26F6"; // exit sits in the same spot as enter
+    b.title = isFull() ? "Exit full screen" : "Full screen";
+  };
   sync();
   document.addEventListener("fullscreenchange", sync);
   document.addEventListener("webkitfullscreenchange", sync);

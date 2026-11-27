@@ -157,15 +157,24 @@
     typeBtns[k] = b;
     fly.appendChild(b);
   });
+  function placeFly() {
+    if (!fly.classList.contains("open")) return;
+    const r = open.getBoundingClientRect();
+    const h = fly.offsetHeight;
+    let top = r.top - 4;
+    top = Math.max(8, Math.min(top, innerHeight - 8 - h));
+    fly.style.left = r.right + 10 + "px";
+    fly.style.top = top + "px";
+  }
   open.addEventListener("click", (ev) => {
     ev.stopPropagation();
     const was = fly.classList.contains("open");
     if (typeof closeFlyouts === "function") closeFlyouts();
     if (!was) {
-      const r = open.getBoundingClientRect();
-      fly.style.left = r.right + 10 + "px";
-      fly.style.top = Math.max(8, r.top - 4) + "px";
       fly.classList.add("open");
+      placeFly();
+      requestAnimationFrame(() => { placeFly(); requestAnimationFrame(placeFly); });
+      setTimeout(placeFly, 200);
     }
   });
   const closePanel = () => {
@@ -427,7 +436,7 @@
   }
   if (typeof flyouts !== "undefined") {
     const mo = new MutationObserver((l) => l.forEach((m) => fit(m.target)));
-    flyouts.forEach((f) => mo.observe(f, { attributes: true, attributeFilter: ["class"] }));
-    addEventListener("resize", () => flyouts.forEach(fit));
+    flyouts.forEach((f) => f !== fly && mo.observe(f, { attributes: true, attributeFilter: ["class"] }));
+    addEventListener("resize", () => flyouts.forEach((f) => (f === fly ? placeFly() : fit(f))));
   }
 })();

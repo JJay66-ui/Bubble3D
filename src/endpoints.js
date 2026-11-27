@@ -108,7 +108,7 @@
     [...tubes.keys()].forEach((s) => !src.has(s) && drop(s));
     src.forEach((s) => update(s, s.visible === false));
     // keep the dots the same small size on screen (a sprite's size is its scale times its distance)
-    const k = DOT_PX / (innerHeight * 2 * Math.tan((camera.fov * Math.PI) / 360)) / 0.875;
+    const k = ((DOT_PX / innerHeight) * 2 * Math.tan((camera.fov * Math.PI) / 360)) / 0.875;
     dots.forEach((d) => d.forEach((s) => s.scale.set(k, k, 1)));
   })();
 })();

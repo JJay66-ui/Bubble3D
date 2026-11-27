@@ -477,7 +477,8 @@
   };
 
   // Closed triangle mesh -> kernel solid (for shapes that aren't a simple prism)
-  function meshSolid(k, m) {
+  function meshSolid(k, m, A) {
+    A = A || AXES.y;
     const T = window.cadTopo(m);
     const F = [];
     const tmp1 = new THREE.Vector3(),
@@ -486,10 +487,14 @@
       lo = Infinity;
     T.tris.forEach((t) => {
       if (t.face === -2) return;
-      let [a, b, c] = t.v;
+      let [a, b, c] = t.v.map((p) => {
+        const q = A.to(p);
+        return new THREE.Vector3(q.x, q.y, q.z);
+      });
+      const nn = A.to(t.n);
       tmp1.subVectors(b, a);
       tmp2.subVectors(c, a);
-      if (tmp1.cross(tmp2).dot(t.n) < 0) [b, c] = [c, b];
+      if (tmp1.cross(tmp2).dot(new THREE.Vector3(nn.x, nn.y, nn.z)) < 0) [b, c] = [c, b];
       [a, b, c].forEach((p) => ((hi = Math.max(hi, p.y)), (lo = Math.min(lo, p.y))));
       const A = [a.x, -a.z, a.y],
         B = [b.x, -b.z, b.y],
@@ -516,30 +521,37 @@
     const ref = Math.abs(d.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
     const u = new THREE.Vector3().crossVectors(d, ref).normalize();
     const v = new THREE.Vector3().crossVectors(d, u).normalize();
+    const axis = Math.abs(d.y) > 0.999 ? "y" : Math.abs(d.x) > 0.999 ? "x" : Math.abs(d.z) > 0.999 ? "z" : null;
+    const A = AXES[axis || "y"];
+    const Vc = A.to(center),
+      Vd = A.to(d);
     let done = 0;
     hosts.forEach((m) => {
       try {
-        let pr = prismAnyAxis(m, "y"),
+        let pr = prismAnyAxis(m, axis || "y"),
           host;
         if (pr) host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
         else {
           // shapes that already have holes or odd outlines: rebuild the solid from the mesh itself
-          const ms = step("solid from mesh", () => meshSolid(k, m));
+          const ms = step("solid from mesh", () => meshSolid(k, m, A));
           host = ms.s;
           pr = { lo: 0, H: ms.H };
         }
-        const O = (p) => [p.x, -p.z, p.y - pr.lo]; // app point -> kernel point (base of the prism at 0)
+        const O = (p) => {
+          const q = A.to(p);
+          return [q.x, -q.z, q.y - pr.lo];
+        }; // app point -> kernel point (base of the prism at 0)
         const cyl = (rad, s0, s1) =>
           step("hole solid", () => {
-            if (Math.abs(d.y) > 0.999) {
+            if (axis) {
               // straight up/down: build it exactly like the other prisms (tries several kernel routes)
               const ring = [];
               for (let i = 0; i < 36; i++) {
                 const a = (i / 36) * TWO_PI;
-                ring.push([center.x + Math.cos(a) * rad, center.z + Math.sin(a) * rad]);
+                ring.push([Vc.x + Math.cos(a) * rad, Vc.z + Math.sin(a) * rad]);
               }
-              const yA = center.y + d.y * s0,
-                yB = center.y + d.y * s1,
+              const yA = Vc.y + Vd.y * s0,
+                yB = Vc.y + Vd.y * s1,
                 yLo = Math.min(yA, yB),
                 len = Math.abs(yB - yA);
               const pr0 = prismFromPoints(k, ring, len);
@@ -610,9 +622,10 @@
         const P = new Float32Array(t.indices.length * 3);
         for (let i = 0; i < t.indices.length; i++) {
           const j = t.indices[i] * 3;
-          P[3 * i] = t.positions[j];
-          P[3 * i + 1] = t.positions[j + 2] + pr.lo;
-          P[3 * i + 2] = -t.positions[j + 1];
+          const rr = A.from(t.positions[j], t.positions[j + 2] + pr.lo, -t.positions[j + 1]);
+          P[3 * i] = rr[0];
+          P[3 * i + 1] = rr[1];
+          P[3 * i + 2] = rr[2];
         }
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(P, 3));
@@ -637,7 +650,7 @@
           m.userData.height = 0;
           m.userData.loopPts = null;
           m.userData.occt = null;
-          m.userData.occtG = { geo: g, s: out, ax: "y", lo: pr.lo, H: pr.H };
+          m.userData.occtG = { geo: g, s: out, ax: axis || "y", lo: pr.lo, H: pr.H };
           m.material.side = THREE.DoubleSide;
           if (m.userData.edges) m.userData.edges.geometry = eg;
           m.updateMatrixWorld(true);

@@ -12,7 +12,10 @@
   g.fill();
   g.beginPath();
   g.arc(32, 32, 20, 0, Math.PI * 2);
-  g.fillStyle = "#ff9f1a";
+  const grad = g.createLinearGradient(0, 12, 0, 52);
+  grad.addColorStop(0, "#4aa3ff");
+  grad.addColorStop(1, "#1f7aff");
+  g.fillStyle = grad;
   g.fill();
   const tex = new THREE.CanvasTexture(cvs);
   const DOT = 0.013; // just a little bigger than the line

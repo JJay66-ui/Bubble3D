@@ -775,5 +775,22 @@
   addEventListener("pointerup", endFace(true), true);
   addEventListener("pointercancel", endFace(false), true);
 
+  // Cut round holes (for screws) through every object the hole touches. ring = closed [[x,z],...] in world units.
+  window.cadCutHoles = async function (hosts, ring, y0, y1, extra, msg) {
+    const pc = await loadPC();
+    const ops = [];
+    hosts.forEach((A) => {
+      try {
+        const res = subtractLayers(pc, layersOf(A), [{ mp: [[ring]], y0, y1 }]);
+        if (res) ops.push(makeOp(A, res));
+      } catch (e) {
+        toast("Couldn't cut " + (A.userData.name || "an object") + " (" + (e.message || e) + ")");
+      }
+    });
+    if (!ops.length) return false;
+    applyOps(ops, msg || "Hole cut", extra || null);
+    return true;
+  };
+
   window.cadCarveInternals = { subtractLayers, area, layersOf, normalize, faceSeg, quadRing };
 })();

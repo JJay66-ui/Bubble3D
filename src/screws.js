@@ -1,1025 +1,824 @@
-// Visible error banner, sturdier per-edge fillet/chamfer, centered arrows drawn on top,
-// side push/pull arrows on boxes, and carving where one object is pushed into another.
-// Load after select-tools.js.
+// Screws and bolts: pick a type and size, tap a surface to place one, adjust it, then press
+// "Set" to cut a matching hole (with your fit gap) in whatever it passes through.
+// Holes work for screws that point straight up or down. Load after carve.js.
 (function () {
-  const el = renderer.domElement;
-  const O = () => window.occtOps;
-  const K = () => (window.cadKernelReady ? window.occtKernel : null);
-  const TWO_PI = Math.PI * 2;
-  const UP = new THREE.Vector3(0, 1, 0);
+  const TYPES = {
+    pan: "Pan head",
+    socket: "Socket cap",
+    flat: "Flat (countersunk)",
+    hex: "Hex bolt",
+    set: "Set screw (no head)",
+    wood: "Wood screw"
+  };
+  const SIZES = { M2: 2, M3: 3, M4: 4, M5: 5, M6: 6, M8: 8, M10: 10, M12: 12 }; // millimetres
+  const mm2s = (mm) => mm / 10; // one scene unit is 10 mm
+  const P = { type: "socket", size: "M4", d: mm2s(4), L: mm2s(16), headD: 0, fit: mm2s(0.2) };
+  let cur = null,
+    placing = false;
 
-  // ---------- Banner so messages can't be missed ----------
-  const toast = document.createElement("div");
-  toast.style.cssText =
-    "position:fixed;left:50%;top:70px;transform:translateX(-50%);max-width:80vw;padding:8px 14px;border-radius:14px;color:#fff;font:13px -apple-system,sans-serif;z-index:30;display:none";
-  document.body.appendChild(toast);
-  let tt;
-  window.cadToast = (t, ok) => {
-    toast.textContent = t;
-    toast.style.background = ok ? "rgba(31,157,85,.95)" : "rgba(192,57,43,.95)";
-    toast.style.display = "block";
-    clearTimeout(tt);
-    tt = setTimeout(() => (toast.style.display = "none"), 9000);
-  };
-
-  // ---------- Kernel helpers (tolerant of small API differences) ----------
-  const step = (name, fn) => {
-    try {
-      return fn();
-    } catch (e) {
-      throw new Error(name + ": " + (e.message || e));
-    }
-  };
-  // getBoundingBox may return {min,max}, a flat array of 6 numbers, or xmin/xmax-style fields
-  const normBox = (b) => {
-    if (b === undefined || b === null) throw new Error("getBoundingBox returned nothing");
-    const pick = (v) => (Array.isArray(v) || ArrayBuffer.isView(v) ? [v[0], v[1], v[2]] : [v.x, v.y, v.z]);
-    if ((Array.isArray(b) || ArrayBuffer.isView(b)) && b.length >= 6 && typeof b[0] === "number")
-      return { min: [b[0], b[1], b[2]], max: [b[3], b[4], b[5]] };
-    if (b.min && b.max) return { min: pick(b.min), max: pick(b.max) };
-    const f = (names) => {
-      for (const n of names) if (typeof b[n] === "number") return b[n];
-    };
-    const mn = ["x", "y", "z"].map((a) => f([a + "min", a + "Min", "min" + a.toUpperCase(), a + "_min"]));
-    const mx = ["x", "y", "z"].map((a) => f([a + "max", a + "Max", "max" + a.toUpperCase(), a + "_max"]));
-    if (mn.concat(mx).every((v) => typeof v === "number")) return { min: mn, max: mx };
-    throw new Error("unknown bounding box format " + JSON.stringify(Array.from ? b : b).slice(0, 120));
-  };
-  const bbox = (k, s) => normBox(k.getBoundingBox(s));
-  function put(k, s, x, y, z) {
-    const b = bbox(k, s);
-    const d = [x - b.min[0], y - b.min[1], z - b.min[2]];
-    const off = (r) => {
-      const n = bbox(k, r).min;
-      return Math.abs(n[0] - x) + Math.abs(n[1] - y) + Math.abs(n[2] - z);
-    };
-    let r = k.translate(s, d[0], d[1], d[2]);
-    if (r === undefined) r = s;
-    if (off(r) > 0.01) {
-      r = k.translate(s, d);
-      if (r === undefined) r = s;
-      if (off(r) > 0.01) throw new Error("translate gave an unexpected position");
-    }
-    return r;
+  // ---------- Geometry ----------
+  function part(g, x, y, z) {
+    const m = g.index ? g.toNonIndexed() : g;
+    if (x || y || z) m.translate(x || 0, y || 0, z || 0);
+    return m;
   }
-  // Builds a straight-sided solid from a polygon. Tries several OCCT routes and checks the
-  // volume of each result, so one wrong guess about the API doesn't stop the feature.
-  function prismFromPoints(k, pts, H) {
-    const P = pts.map((a) => [a[0], -a[1]]); // app (x, z) -> OCCT (x, y)
-    const n = P.length;
-    let area = 0;
-    for (let i = 0; i < n; i++) {
-      const a = P[i],
-        b = P[(i + 1) % n];
-      area += a[0] * b[1] - b[0] * a[1];
-    }
-    const want = (Math.abs(area) / 2) * H;
-    const has = (name) => typeof k[name] === "function";
-    const good = (s) => {
-      if (s === undefined || s === null) return false;
-      if (!has("getVolume")) return true;
-      const v = Math.abs(k.getVolume(s));
-      return v > 0 && Math.abs(v - want) / want < 0.02;
-    };
-    const tries = [
-      [
-        "lines",
-        () => {
-          const e = P.map((a, i) => {
-            const b = P[(i + 1) % n];
-            return k.makeLineEdge(a[0], a[1], 0, b[0], b[1], 0);
-          });
-          return k.extrude(k.makeFace(k.makeWire(e)), 0, 0, H);
-        }
-      ],
-      [
-        "vertices",
-        () => {
-          const v = P.map((a) => k.makeVertex(a[0], a[1], 0));
-          const e = v.map((a, i) => k.makeEdge(a, v[(i + 1) % n]));
-          return k.extrude(k.makeFace(k.makeWire(e)), 0, 0, H);
-        }
-      ],
-      [
-        "polygon",
-        () => k.extrude(k.makeFace(k.makePolygon(P.map((a) => [a[0], a[1], 0]))), 0, 0, H)
-      ],
-      [
-        "triangles",
-        () => {
-          const idx = THREE.ShapeUtils.triangulateShape(
-            P.map((a) => new THREE.Vector2(a[0], a[1])),
-            []
-          );
-          const F = [];
-          const tri = (a, b, c) =>
-            F.push(k.buildTriFace(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]));
-          idx.forEach(([i, j, l]) => {
-            const a = P[i],
-              b = P[j],
-              c = P[l];
-            tri([a[0], a[1], 0], [c[0], c[1], 0], [b[0], b[1], 0]);
-            tri([a[0], a[1], H], [b[0], b[1], H], [c[0], c[1], H]);
-          });
-          for (let i = 0; i < n; i++) {
-            const a = P[i],
-              b = P[(i + 1) % n];
-            tri([a[0], a[1], 0], [b[0], b[1], 0], [b[0], b[1], H]);
-            tri([a[0], a[1], 0], [b[0], b[1], H], [a[0], a[1], H]);
-          }
-          return has("sewAndSolidify") ? k.sewAndSolidify(F, 1e-6) : k.buildSolidFromFaces(F);
-        }
-      ]
-    ];
-    const errs = [];
-    for (const [name, fn] of tries) {
-      try {
-        const s = fn();
-        if (good(s)) return s;
-        errs.push(name + ": wrong volume");
-      } catch (e) {
-        errs.push(name + ": " + (e.message || e));
-      }
-    }
-    const names = new Set();
-    for (let o = k; o && o !== Object.prototype; o = Object.getPrototypeOf(o))
-      Object.getOwnPropertyNames(o).forEach((x) => names.add(x));
-    const m = [...names].filter((x) => /polygon|wire|face|solid|sew|extrude|prism|edge|vertex/i.test(x));
-    console.warn("Sketch solid failed", errs, "points", pts, "methods", m);
-    throw new Error("could not build sketch solid [" + errs.join("; ") + "] methods: " + m.join(", "));
-  }
-
-  // Is this mesh an upright prism (flat top and bottom, straight walls) sitting on the plate? Returns its outline.
-  function prismOfMesh(m) {
-    if (!window.cadTopo) return null;
-    const T = window.cadTopo(m);
-    let lo = Infinity,
-      hi = -Infinity;
-    T.tris.forEach((t) =>
-      t.v.forEach((v) => {
-        lo = Math.min(lo, v.y);
-        hi = Math.max(hi, v.y);
-      })
-    );
-    const H = hi - lo;
-    if (H < 0.05) return null;
-    if (Math.abs(lo) > 0.02) throw new Error("the shape needs to sit on the plate first");
-    const key = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.z * 1e3);
-    const edges = new Map();
-    let tops = 0;
-    for (const t of T.tris) {
-      if (t.face === -2) continue;
-      if (t.n.y > 0.999) {
-        if (Math.abs(t.v[0].y - hi) > 1e-3 || Math.abs(t.v[1].y - hi) > 1e-3 || Math.abs(t.v[2].y - hi) > 1e-3) return null;
-        tops++;
-        for (let e = 0; e < 3; e++) {
-          const a = t.v[e],
-            b = t.v[(e + 1) % 3],
-            ka = key(a),
-            kb = key(b),
-            ek = ka < kb ? ka + "|" + kb : kb + "|" + ka,
-            r = edges.get(ek);
-          if (r) r.n++;
-          else edges.set(ek, { n: 1, a, b, ka, kb });
-        }
-      } else if (t.n.y < -0.999) {
-        if (Math.abs(t.v[0].y - lo) > 1e-3 || Math.abs(t.v[1].y - lo) > 1e-3 || Math.abs(t.v[2].y - lo) > 1e-3) return null;
-      } else if (Math.abs(t.n.y) > 0.01) return null;
-    }
-    if (!tops) return null;
-    const next = new Map();
-    let count = 0;
-    edges.forEach((r) => {
-      if (r.n !== 1) return;
-      count++;
-      if (!next.has(r.ka)) next.set(r.ka, []);
-      if (!next.has(r.kb)) next.set(r.kb, []);
-      next.get(r.ka).push(r);
-      next.get(r.kb).push(r);
+  function merge(list) {
+    let n = 0;
+    list.forEach((g) => (n += g.attributes.position.count));
+    const arr = new Float32Array(n * 3);
+    let o = 0;
+    list.forEach((g) => {
+      arr.set(g.attributes.position.array, o);
+      o += g.attributes.position.count * 3;
     });
-    if (count < 3) return null;
-    // walk the outline
-    const first = [...edges.values()].find((r) => r.n === 1);
-    const pts = [[first.a.x, first.a.z]];
-    let cur = first.kb,
-      prev = first,
-      guard = 0;
-    while (cur !== first.ka && guard++ < count + 2) {
-      const r = next.get(cur).find((q) => q !== prev);
-      if (!r) return null;
-      const v = r.ka === cur ? r.a : r.b;
-      pts.push([v.x, v.z]);
-      cur = r.ka === cur ? r.kb : r.ka;
-      prev = r;
-    }
-    if (cur !== first.ka || pts.length < 3 || pts.length !== count) return null; // holes or several outlines: not handled
-    return { pts, H };
-  }
-
-  // Straight prism along any axis (shapes built on Front/Back/Left/Right views are along X or Z).
-  // The shape is turned into a "virtual" frame where its axis is up, built in OCCT, then turned back.
-  const AXES = {
-    y: { to: (v) => ({ x: v.x, y: v.y, z: v.z }), from: (x, y, z) => [x, y, z] },
-    x: { to: (v) => ({ x: v.z, y: v.x, z: v.y }), from: (x, y, z) => [y, z, x] },
-    z: { to: (v) => ({ x: v.y, y: v.z, z: v.x }), from: (x, y, z) => [z, x, y] }
-  };
-  function prismAnyAxis(m, only) {
-    const T = window.cadTopo(m);
-    for (const ax of only ? [only] : ["y", "x", "z"]) {
-      const A = AXES[ax];
-      let lo = Infinity,
-        hi = -Infinity;
-      const V = T.tris.map((t) => t.v.map(A.to));
-      V.forEach((tv) => tv.forEach((v) => ((lo = Math.min(lo, v.y)), (hi = Math.max(hi, v.y)))));
-      const H = hi - lo;
-      if (H < 0.05) continue;
-      const key = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.z * 1e3);
-      const edges = new Map();
-      let tops = 0,
-        ok = true;
-      T.tris.forEach((t, i) => {
-        if (!ok || t.face === -2) return;
-        const tv = V[i],
-          ny = t.n.clone();
-        const n = A.to(ny); // virtual normal
-        if (n.y > 0.999) {
-          if (tv.some((v) => Math.abs(v.y - hi) > 1e-3)) return (ok = false);
-          tops++;
-          for (let e = 0; e < 3; e++) {
-            const a = tv[e],
-              b = tv[(e + 1) % 3],
-              ka = key(a),
-              kb = key(b),
-              ek = ka < kb ? ka + "|" + kb : kb + "|" + ka,
-              r = edges.get(ek);
-            if (r) r.n++;
-            else edges.set(ek, { n: 1, a, b, ka, kb });
-          }
-        } else if (n.y < -0.999) {
-          if (tv.some((v) => Math.abs(v.y - lo) > 1e-3)) ok = false;
-        } else if (Math.abs(n.y) > 0.01) ok = false;
-      });
-      if (!ok || !tops) continue;
-      const next = new Map();
-      let count = 0;
-      edges.forEach((r) => {
-        if (r.n !== 1) return;
-        count++;
-        [r.ka, r.kb].forEach((q) => {
-          if (!next.has(q)) next.set(q, []);
-          next.get(q).push(r);
-        });
-      });
-      if (count < 3) continue;
-      const first = [...edges.values()].find((r) => r.n === 1);
-      const pts = [[first.a.x, first.a.z]];
-      let cur = first.kb,
-        prev = first,
-        guard = 0;
-      while (cur !== first.ka && guard++ < count + 2) {
-        const r = next.get(cur).find((q) => q !== prev);
-        if (!r) break;
-        const v = r.ka === cur ? r.a : r.b;
-        pts.push([v.x, v.z]);
-        cur = r.ka === cur ? r.kb : r.ka;
-        prev = r;
-      }
-      if (cur !== first.ka || pts.length !== count) continue;
-      return { ax, pts, H, lo };
-    }
-    return null;
-  }
-  function bevelPrism(k, m, chs, kind, size) {
-    let info = m.userData.occtG && m.userData.occtG.geo === m.geometry ? m.userData.occtG : null;
-    if (!info) {
-      const pr = prismAnyAxis(m);
-      if (!pr) return false;
-      info = { ax: pr.ax, lo: pr.lo, H: pr.H, s: prismFromPoints(k, pr.pts, pr.H) };
-    }
-    const A = AXES[info.ax],
-      s = info.s;
-    const all = step("list edges", () => k.getSubShapes(s, "edge")).map((e) => {
-      const b = step("edge bounds", () => bbox(k, e));
-      return {
-        e,
-        c: new THREE.Vector3(
-          (b.min[0] + b.max[0]) / 2,
-          (b.min[2] + b.max[2]) / 2 + info.lo,
-          -(b.min[1] + b.max[1]) / 2
-        )
-      };
-    });
-    const chosen = chs.map((ch) => {
-      const q = A.to(ch.c);
-      const cv = new THREE.Vector3(q.x, q.y, q.z);
-      let best = null,
-        bd = 0.25;
-      all.forEach((o) => {
-        const d = o.c.distanceTo(cv);
-        if (d < bd) {
-          bd = d;
-          best = o.e;
-        }
-      });
-      if (!best) throw new Error("match edge: no kernel edge near the one you picked");
-      return best;
-    });
-    const edges = [...new Set(chosen)];
-    const out = step(kind, () => (kind === "fillet" ? k.fillet(s, edges, size) : k.chamfer(s, edges, size)));
-    const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
-    const P = new Float32Array(t.indices.length * 3);
-    for (let i = 0; i < t.indices.length; i++) {
-      const j = t.indices[i] * 3;
-      const r = A.from(t.positions[j], t.positions[j + 2] + info.lo, -t.positions[j + 1]);
-      P[3 * i] = r[0];
-      P[3 * i + 1] = r[1];
-      P[3 * i + 2] = r[2];
-    }
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
     g.computeVertexNormals();
-    const eg = new THREE.EdgesGeometry(g, 30);
-    const b = {
-      geo: m.geometry,
-      pos: m.position.clone(),
-      scl: m.scale.clone(),
-      quat: m.quaternion.clone(),
-      imp: m.userData.imported,
-      h: m.userData.height,
-      og: m.userData.occtG,
-      eg: m.userData.edges ? m.userData.edges.geometry : null
-    };
-    const apply = () => {
-      m.geometry = g;
-      m.position.set(0, 0, 0);
-      m.scale.set(1, 1, 1);
-      m.quaternion.set(0, 0, 0, 1);
-      m.userData.imported = true;
-      m.userData.height = 0;
-      m.userData.loopPts = null;
-      m.userData.occt = null;
-      m.userData.occtG = { geo: g, s: out, ax: info.ax, lo: info.lo, H: info.H };
-      m.material.side = THREE.DoubleSide;
-      if (m.userData.edges) m.userData.edges.geometry = eg;
-      m.updateMatrixWorld(true);
-    };
-    const revert = () => {
-      m.geometry = b.geo;
-      m.position.copy(b.pos);
-      m.scale.copy(b.scl);
-      m.quaternion.copy(b.quat);
-      m.userData.imported = b.imp;
-      m.userData.height = b.h;
-      m.userData.occtG = b.og;
-      if (m.userData.edges && b.eg) m.userData.edges.geometry = b.eg;
-      m.updateMatrixWorld(true);
-    };
-    apply();
-    undoStack.push({ redo: apply, undo: revert });
-    redoStack.length = 0;
-    cadToast("OCCT " + kind + " applied to " + edges.length + " edge(s)", true);
-    return true;
-  }
-
-  // Round hole along the app X or Z axis (side faces) through straight prisms and boxes.
-  // center = app point on the hole axis, r = hole radius, a0..a1 = range along the axis.
-  window.cadSideHole = function (hosts, axis, center, r, a0, a1, msg) {
-    const k = K();
-    window.cadSideHoleWhy = "";
-    if (!k) {
-      window.cadSideHoleWhy = "the shape engine isn't loaded yet";
-      return 0;
-    }
-    const A = AXES[axis];
-    const q = A.to(center);
-    const ring = [];
-    for (let i = 0; i < 48; i++) {
-      const t = (i / 48) * TWO_PI;
-      ring.push([q.x + Math.cos(t) * r, q.z + Math.sin(t) * r]);
-    }
-    let done = 0;
-    hosts.forEach((m) => {
-      try {
-        const pr = prismAnyAxis(m, axis);
-        if (!pr) {
-          window.cadSideHoleWhy = (m.userData.name || "object") + " isn't a straight prism in that direction";
-          return;
-        }
-        const lo = Math.max(pr.lo, a0),
-          hi = Math.min(pr.lo + pr.H, a1);
-        if (hi - lo < 0.01) {
-          window.cadSideHoleWhy = "the screw doesn't reach into " + (m.userData.name || "the object") + " (it spans " + pr.lo.toFixed(2) + " to " + (pr.lo + pr.H).toFixed(2) + ", screw " + a0.toFixed(2) + " to " + a1.toFixed(2) + ")";
-          return;
-        }
-        const host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
-        let tool = step("hole solid", () => prismFromPoints(k, ring, hi - lo));
-        tool = step("hole place", () => k.translate(tool, 0, 0, lo - pr.lo));
-        const out = step("cut", () => k.cut(host, tool));
-        const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
-        const P = new Float32Array(t.indices.length * 3);
-        for (let i = 0; i < t.indices.length; i++) {
-          const j = t.indices[i] * 3;
-          const rr = A.from(t.positions[j], t.positions[j + 2] + pr.lo, -t.positions[j + 1]);
-          P[3 * i] = rr[0];
-          P[3 * i + 1] = rr[1];
-          P[3 * i + 2] = rr[2];
-        }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(P, 3));
-        g.computeVertexNormals();
-        const eg = new THREE.EdgesGeometry(g, 30);
-        const b = {
-          geo: m.geometry,
-          pos: m.position.clone(),
-          scl: m.scale.clone(),
-          quat: m.quaternion.clone(),
-          imp: m.userData.imported,
-          h: m.userData.height,
-          og: m.userData.occtG,
-          eg: m.userData.edges ? m.userData.edges.geometry : null
-        };
-        const apply = () => {
-          m.geometry = g;
-          m.position.set(0, 0, 0);
-          m.scale.set(1, 1, 1);
-          m.quaternion.set(0, 0, 0, 1);
-          m.userData.imported = true;
-          m.userData.height = 0;
-          m.userData.loopPts = null;
-          m.userData.occt = null;
-          m.userData.occtG = { geo: g, s: out, ax: axis, lo: pr.lo, H: pr.H };
-          m.material.side = THREE.DoubleSide;
-          if (m.userData.edges) m.userData.edges.geometry = eg;
-          m.updateMatrixWorld(true);
-        };
-        const revert = () => {
-          m.geometry = b.geo;
-          m.position.copy(b.pos);
-          m.scale.copy(b.scl);
-          m.quaternion.copy(b.quat);
-          m.userData.imported = b.imp;
-          m.userData.height = b.h;
-          m.userData.occtG = b.og;
-          if (m.userData.edges && b.eg) m.userData.edges.geometry = b.eg;
-          m.updateMatrixWorld(true);
-        };
-        apply();
-        undoStack.push({ redo: apply, undo: revert });
-        redoStack.length = 0;
-        done++;
-      } catch (e) {
-        window.cadSideHoleWhy = e.message || String(e);
-        console.warn("side hole failed", e);
-      }
-    });
-    if (done) cadToast(msg || "Hole cut", true);
-    return done;
-  };
-
-  // Closed triangle mesh -> kernel solid (for shapes that aren't a simple prism)
-  function meshSolid(k, m, A) {
-    A = A || AXES.y;
-    const T = window.cadTopo(m);
-    const F = [];
-    const tmp1 = new THREE.Vector3(),
-      tmp2 = new THREE.Vector3();
-    let hi = -Infinity,
-      lo = Infinity;
-    T.tris.forEach((t) => {
-      if (t.face === -2) return;
-      let [a, b, c] = t.v.map((p) => {
-        const q = A.to(p);
-        return new THREE.Vector3(q.x, q.y, q.z);
-      });
-      const nn = A.to(t.n);
-      tmp1.subVectors(b, a);
-      tmp2.subVectors(c, a);
-      if (tmp1.cross(tmp2).dot(new THREE.Vector3(nn.x, nn.y, nn.z)) < 0) [b, c] = [c, b];
-      [a, b, c].forEach((p) => ((hi = Math.max(hi, p.y)), (lo = Math.min(lo, p.y))));
-      const A = [a.x, -a.z, a.y],
-        B = [b.x, -b.z, b.y],
-        C = [c.x, -c.z, c.y];
-      F.push(k.buildTriFace(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2]));
-    });
-    const sew = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-5) : k.buildSolidFromFaces(F);
-    if (!sew) throw new Error("couldn't rebuild the solid from the mesh");
-    if (k.getVolume && Math.abs(k.getVolume(sew)) < 1e-6) throw new Error("rebuilt solid is empty");
-    return { s: sew, H: hi - lo };
-  }
-
-  // Round hole in ANY direction (with optional thread grooves) through upright prisms and boxes.
-  // center = where the screw touches the surface, dirIn = unit vector pointing into the object,
-  // r = core radius, depth = hole length, grooves = [{s0, s1, r}] distances along dirIn.
-  window.cadAxisHole = function (hosts, center, dirIn, r, depth, grooves, msg) {
-    const k = K();
-    window.cadAxisHoleWhy = "";
-    if (!k) {
-      window.cadAxisHoleWhy = "the shape engine isn't loaded yet";
-      return 0;
-    }
-    const d = dirIn.clone().normalize();
-    const ref = Math.abs(d.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-    const u = new THREE.Vector3().crossVectors(d, ref).normalize();
-    const v = new THREE.Vector3().crossVectors(d, u).normalize();
-    const axis = Math.abs(d.y) > 0.999 ? "y" : Math.abs(d.x) > 0.999 ? "x" : Math.abs(d.z) > 0.999 ? "z" : null;
-    const A = AXES[axis || "y"];
-    const Vc = A.to(center),
-      Vd = A.to(d);
-    let done = 0;
-    hosts.forEach((m) => {
-      try {
-        let pr = prismAnyAxis(m, axis || "y"),
-          host;
-        if (pr) host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
-        else {
-          // shapes that already have holes or odd outlines: rebuild the solid from the mesh itself
-          const ms = step("solid from mesh", () => meshSolid(k, m, A));
-          host = ms.s;
-          pr = { lo: 0, H: ms.H };
-        }
-        const O = (p) => {
-          const q = A.to(p);
-          return [q.x, -q.z, q.y - pr.lo];
-        }; // app point -> kernel point (base of the prism at 0)
-        const cyl = (rad, s0, s1) =>
-          step("hole solid", () => {
-            if (axis) {
-              // straight up/down: build it exactly like the other prisms (tries several kernel routes)
-              const ring = [];
-              for (let i = 0; i < 36; i++) {
-                const a = (i / 36) * TWO_PI;
-                ring.push([Vc.x + Math.cos(a) * rad, Vc.z + Math.sin(a) * rad]);
-              }
-              const yA = Vc.y + Vd.y * s0,
-                yB = Vc.y + Vd.y * s1,
-                yLo = Math.min(yA, yB),
-                len = Math.abs(yB - yA);
-              const pr0 = prismFromPoints(k, ring, len);
-              return k.translate(pr0, 0, 0, yLo - pr.lo);
-            }
-            // any direction: build the cylinder from triangles (works in any orientation)
-            const N = 32,
-              len = s1 - s0,
-              c0 = center.clone().addScaledVector(d, s0),
-              c1 = c0.clone().addScaledVector(d, len);
-            const B = [],
-              T = [];
-            for (let i = 0; i < N; i++) {
-              const a = (i / N) * TWO_PI,
-                off = u.clone().multiplyScalar(Math.cos(a) * rad).addScaledVector(v, Math.sin(a) * rad);
-              B.push(O(c0.clone().add(off)));
-              T.push(O(c1.clone().add(off)));
-            }
-            const C0 = O(c0),
-              C1 = O(c1);
-            const want = 0.5 * N * rad * rad * Math.sin(TWO_PI / N) * len;
-            const make = (flip) => {
-              const F = [];
-              const tri = (p, q, r2) =>
-                flip
-                  ? F.push(k.buildTriFace(p[0], p[1], p[2], r2[0], r2[1], r2[2], q[0], q[1], q[2]))
-                  : F.push(k.buildTriFace(p[0], p[1], p[2], q[0], q[1], q[2], r2[0], r2[1], r2[2]));
-              for (let i = 0; i < N; i++) {
-                const j = (i + 1) % N;
-                tri(C0, B[j], B[i]);
-                tri(C1, T[i], T[j]);
-                tri(B[i], B[j], T[j]);
-                tri(B[i], T[j], T[i]);
-              }
-              return typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-6) : k.buildSolidFromFaces(F);
-            };
-            let sol = null,
-              why = "";
-            for (const flip of [false, true]) {
-              try {
-                const c = make(flip);
-                if (!c) continue;
-                const sv = k.getVolume ? k.getVolume(c) : want;
-                const vol = Math.abs(sv);
-                if (sv > 0 && Math.abs(vol - want) / want < 0.05) {
-                  sol = c;
-                  break;
-                }
-                why = "cutter volume " + vol.toFixed(4) + " vs " + want.toFixed(4);
-              } catch (e) {
-                why = e.message || String(e);
-              }
-            }
-            if (!sol) throw new Error("cutter solid failed (" + why + ")");
-            return sol;
-          });
-        let out = step("cut core", () => k.cut(host, cyl(r, -0.03, depth)));
-        const vol0 = k.getVolume ? Math.abs(k.getVolume(host)) : 1,
-          vol1 = k.getVolume ? Math.abs(k.getVolume(out)) : 0;
-        if (k.getVolume && Math.abs(vol0 - vol1) < 1e-5) {
-          window.cadAxisHoleWhy = "the screw doesn't reach into " + (m.userData.name || "the object");
-          return;
-        }
-        (grooves || []).forEach((g) => {
-          out = step("cut thread", () => k.cut(out, cyl(g.r, g.s0, g.s1)));
-        });
-        const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
-        const P = new Float32Array(t.indices.length * 3);
-        for (let i = 0; i < t.indices.length; i++) {
-          const j = t.indices[i] * 3;
-          const rr = A.from(t.positions[j], t.positions[j + 2] + pr.lo, -t.positions[j + 1]);
-          P[3 * i] = rr[0];
-          P[3 * i + 1] = rr[1];
-          P[3 * i + 2] = rr[2];
-        }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(P, 3));
-        g.computeVertexNormals();
-        const eg = new THREE.EdgesGeometry(g, 30);
-        const b = {
-          geo: m.geometry,
-          pos: m.position.clone(),
-          scl: m.scale.clone(),
-          quat: m.quaternion.clone(),
-          imp: m.userData.imported,
-          h: m.userData.height,
-          og: m.userData.occtG,
-          eg: m.userData.edges ? m.userData.edges.geometry : null
-        };
-        const apply = () => {
-          m.geometry = g;
-          m.position.set(0, 0, 0);
-          m.scale.set(1, 1, 1);
-          m.quaternion.set(0, 0, 0, 1);
-          m.userData.imported = true;
-          m.userData.height = 0;
-          m.userData.loopPts = null;
-          m.userData.occt = null;
-          m.userData.occtG = { geo: g, s: out, ax: axis || "y", lo: pr.lo, H: pr.H };
-          m.material.side = THREE.DoubleSide;
-          if (m.userData.edges) m.userData.edges.geometry = eg;
-          m.updateMatrixWorld(true);
-        };
-        const revert = () => {
-          m.geometry = b.geo;
-          m.position.copy(b.pos);
-          m.scale.copy(b.scl);
-          m.quaternion.copy(b.quat);
-          m.userData.imported = b.imp;
-          m.userData.height = b.h;
-          m.userData.occtG = b.og;
-          if (m.userData.edges && b.eg) m.userData.edges.geometry = b.eg;
-          m.updateMatrixWorld(true);
-        };
-        apply();
-        undoStack.push({ redo: apply, undo: revert });
-        redoStack.length = 0;
-        done++;
-      } catch (e) {
-        window.cadAxisHoleWhy = e.message || String(e);
-        console.warn("axis hole failed", e);
-      }
-    });
-    if (done) cadToast(msg || "Hole cut", true);
-    return done;
-  };
-
-  // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
-  function solidOf(k, m) {
-    const own =
-      m.userData.occt &&
-      m.position.x === 0 &&
-      m.position.z === 0 &&
-      m.scale.x === 1 &&
-      m.scale.z === 1 &&
-      m.rotation.y === 0;
-    if (own) return m.userData.occt;
-    const p = m.geometry.parameters || {},
-      H = Math.abs(m.userData.height);
-    if (m.userData.imported && !m.userData.loopPts) {
-      // Shapes made by sliding faces / sheets: if it is a straight upright prism, rebuild it in OCCT
-      const pr = prismOfMesh(m);
-      if (pr) return { s: prismFromPoints(k, pr.pts, pr.H), H: pr.H };
-      throw new Error(
-        "this shape isn't a straight upright solid on the plate (flat top, straight walls), so OCCT can't rebuild it. Shapes built on a side view or with slanted faces aren't supported yet"
-      );
-    }
-    if (m.userData.height < 0.05) throw new Error("this shape is still flat. Extrude it up first (drag its arrow or use Extrude out), then chamfer or fillet");
-    if (Math.abs(m.rotation.y) > 1e-6) throw new Error("rotated shapes aren't supported yet");
-    if (m.userData.loopPts) {
-      // Sketch shape (triangle, polygon...): rebuild it in OCCT from its corner points
-      const sx = m.scale.x,
-        sz = m.scale.z,
-        ox = m.position.x,
-        oz = m.position.z;
-      const pts = m.userData.loopPts.map((q) => [q.x * sx + ox, q.z * sz + oz]);
-      return { s: prismFromPoints(k, pts, H), H };
-    }
-    if (m.userData.imported || p.loop)
-      throw new Error("STL imports, cut results and moved filleted shapes aren't supported yet");
-    const cx = m.position.x,
-      cz = m.position.z;
-    if (p.radiusTop !== undefined) {
-      if (Math.abs((p.thetaLength || TWO_PI) - TWO_PI) > 1e-6) throw new Error("half cylinder");
-      const r = p.radiusTop * m.scale.x;
-      return { s: step("place cylinder", () => put(k, k.makeCylinder(r, H), cx - r, -cz - r, 0)), H };
-    }
-    if (p.width !== undefined) {
-      const W = p.width * m.scale.x,
-        D = p.depth * m.scale.z;
-      return { s: step("place box", () => put(k, k.makeBox(W, D, H), cx - W / 2, -cz - D / 2, 0)), H };
-    }
-    throw new Error("unsupported shape");
-  }
-  function swapGeometry(m, g, H, shape) {
-    const b = {
-      geo: m.geometry,
-      edges: m.userData.edges,
-      imp: m.userData.imported,
-      occt: m.userData.occt,
-      p: m.position.clone(),
-      s: m.scale.clone()
-    };
-    const apply = () => {
-      m.geometry = g;
-      m.userData.imported = true;
-      m.userData.occt = { s: shape, H };
-      m.position.x = 0;
-      m.position.z = 0;
-      m.scale.x = 1;
-      m.scale.z = 1;
-      setHeight(m, H);
-      O().addEdges(m, g);
-    };
-    const revert = () => {
-      m.geometry = b.geo;
-      m.userData.imported = b.imp;
-      m.userData.occt = b.occt;
-      m.position.x = b.p.x;
-      m.position.z = b.p.z;
-      m.scale.x = b.s.x;
-      m.scale.z = b.s.z;
-      setHeight(m, H);
-      if (m.userData.edges) m.remove(m.userData.edges);
-      m.userData.edges = b.edges;
-      if (b.edges) m.add(b.edges);
-    };
-    apply();
-    undoStack.push({ redo: apply, undo: revert });
-    redoStack.length = 0;
-  }
-
-  // ---------- Per-edge fillet / chamfer (used by select-tools.js) ----------
-  window.cadBevelEdges = function (k, m, chs, kind, size) {
-    if (m.userData.imported && !m.userData.loopPts && !(m.userData.occt && m.position.x === 0 && m.position.z === 0)) {
-      if (bevelPrism(k, m, chs, kind, size)) return;
-    }
-    const { s, H } = solidOf(k, m);
-    const all = step("list edges", () => k.getSubShapes(s, "edge")).map((e) => {
-      const b = step("edge bounds", () => bbox(k, e));
-      return {
-        e,
-        c: new THREE.Vector3(
-          (b.min[0] + b.max[0]) / 2,
-          (b.min[2] + b.max[2]) / 2,
-          -(b.min[1] + b.max[1]) / 2
-        )
-      };
-    });
-    const chosen = chs.map((ch) => {
-      let best = null,
-        bd = 0.2;
-      all.forEach((o) => {
-        const d = o.c.distanceTo(ch.c);
-        if (d < bd) {
-          bd = d;
-          best = o.e;
-        }
-      });
-      if (!best) throw new Error("match edge: no kernel edge near the one you picked");
-      return best;
-    });
-    const edges = [...new Set(chosen)];
-    const out = step(kind, () => (kind === "fillet" ? k.fillet(s, edges, size) : k.chamfer(s, edges, size)));
-    const g = step("mesh result", () => O().toGeometry(k.tessellate(out, 0.05, 0.3), H));
-    swapGeometry(m, g, H, out);
-    cadToast("OCCT " + kind + " applied to " + edges.length + " edge(s)", true);
-  };
-
-  // ---------- Carve: whatever overlaps the pushed object is removed from the others ----------
-  function carve(tool) {
-    if (window.cadCarve) return window.cadCarve(tool); // carve.js does this without OCCT
-    const k = K();
-    if (!k || !O() || !O().toGeometry) return;
-    const tb = new THREE.Box3().setFromObject(tool).expandByScalar(-0.01);
-    shapes.forEach((o) => {
-      if (o === tool || o.visible === false) return;
-      if (!new THREE.Box3().setFromObject(o).intersectsBox(tb)) return;
-      try {
-        const a = solidOf(k, o),
-          b = solidOf(k, tool);
-        const out = step("cut", () => k.cut(a.s, b.s));
-        if (Math.abs(k.getVolume(a.s) - k.getVolume(out)) < 1e-4) return;
-        const g = O().toGeometry(k.tessellate(out, 0.05, 0.3), a.H);
-        swapGeometry(o, g, a.H, out);
-        cadToast("Carved " + (o.userData.name || "object") + " where it overlaps", true);
-      } catch (e) {
-        cadToast("Carve not applied (" + (e.message || e) + ")");
-      }
-    });
-  }
-
-  // Remember the corner points of sketch shapes so OCCT can rebuild them
-  const _lts = loopToShape;
-  loopToShape = function (loop) {
-    const mesh = _lts(loop);
-    mesh.userData.loopPts = loop.pts.map((p) => p.clone());
-    return mesh;
-  };
-
-  // Middle of a shape's footprint (area centroid), so a triangle's arrow sits in its middle
-  const cenCache = new WeakMap();
-  window.cadCentroid = function (m) {
-    m.updateMatrixWorld(true);
-    const g = m.geometry;
-    let c = cenCache.get(g);
-    if (!c) {
-      const pos = g.attributes.position,
-        idx = g.index,
-        n = (idx ? idx.count : pos.count) / 3;
-      let A = 0,
-        sx = 0,
-        sz = 0;
-      const at = (i) => (idx ? idx.getX(i) : i);
-      for (let t = 0; t < n; t++) {
-        const i = at(3 * t),
-          j = at(3 * t + 1),
-          l = at(3 * t + 2);
-        const ax = pos.getX(i),
-          az = pos.getZ(i),
-          bx = pos.getX(j),
-          bz = pos.getZ(j),
-          cx = pos.getX(l),
-          cz = pos.getZ(l);
-        const area = Math.abs((bx - ax) * (cz - az) - (cx - ax) * (bz - az)) / 2;
-        A += area;
-        sx += (area * (ax + bx + cx)) / 3;
-        sz += (area * (az + bz + cz)) / 3;
-      }
-      if (A > 1e-9) {
-        c = { x: sx / A, z: sz / A };
-        cenCache.set(g, c);
-      }
-    }
-    if (!c) {
-      const bb = new THREE.Box3().setFromObject(m);
-      return { x: (bb.min.x + bb.max.x) / 2, z: (bb.min.z + bb.max.z) / 2 };
-    }
-    const v = new THREE.Vector3(c.x, 0, c.z).applyMatrix4(m.matrixWorld);
-    return { x: v.x, z: v.z };
-  };
-
-  // ---------- Arrow: centered on the object and drawn over everything ----------
-  [shaft, head, downHead].forEach((a) => {
-    a.material.depthTest = false;
-    a.renderOrder = 20;
-  });
-  const _show = showArrow;
-  showArrow = function (mesh) {
-    _show(mesh);
-    const bb = new THREE.Box3().setFromObject(mesh);
-    const c = window.cadCentroid(mesh);
-    arrow.position.set(c.x, bb.max.y, c.z);
-  };
-
-  // ---------- Side arrows on boxes ----------
-  const mat = new THREE.MeshBasicMaterial({ color: 0x4aa3ff, depthTest: false });
-  const sides = [["x", 1], ["x", -1], ["z", 1], ["z", -1]].map(([ax, sign]) => {
-    const g = new THREE.Group();
-    const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.1, 10), mat);
-    sh.position.y = 0.55;
-    const hd = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.8, 16), mat);
-    hd.position.y = 1.5;
-    g.add(sh, hd);
-    g.children.forEach((c) => (c.renderOrder = 20));
-    g.userData = { ax, sign };
-    g.visible = false;
-    scene.add(g);
     return g;
-  });
-  function sideInfo(m) {
-    const p = m.geometry.parameters || {};
-    if (m.userData.imported || p.loop || p.width === undefined || p.radiusTop !== undefined) return null;
-    if (!(m.userData.height > 0.05)) return null;
-    const r = m.rotation.y;
-    return {
-      W: p.width * m.scale.x,
-      D: p.depth * m.scale.z,
-      p,
-      ex: new THREE.Vector3(Math.cos(r), 0, -Math.sin(r)),
-      ez: new THREE.Vector3(Math.sin(r), 0, Math.cos(r))
-    };
   }
-  const dirOf = (a, inf) => (a.userData.ax === "x" ? inf.ex : inf.ez).clone().multiplyScalar(a.userData.sign);
-  const scr = (v) => {
-    const p = v.clone().project(camera);
-    return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight };
-  };
+  // local frame: head sits on +Y side of the surface (y 0 to headH), the shank goes down to y = -L
+  function buildGeo(p) {
+    const r = p.d / 2,
+      L = Math.max(p.L, p.d),
+      parts = [];
+    const cyl = (rt, rb, h, seg) => new THREE.CylinderGeometry(rt, rb, h, seg || 28);
+    let headD = p.headD > 0 ? p.headD : p.d * (p.type === "hex" ? 1.8 : p.type === "socket" ? 1.5 : 2);
+    let headH = p.d * (p.type === "pan" || p.type === "wood" ? 0.7 : p.type === "hex" ? 0.65 : p.type === "flat" ? 0.5 : 1);
+    const tip = Math.min(L * 0.25, p.d * 0.9);
+    const shank = L - tip;
+    if (p.type === "set") headH = 0;
+    // shank and tip
+    if (p.type === "flat") {
+      parts.push(part(cyl(headD / 2, r, headH, 28), 0, -headH / 2));
+      parts.push(part(cyl(r, r, shank - headH), 0, -headH - (shank - headH) / 2));
+    } else {
+      parts.push(part(cyl(r, r, shank), 0, -shank / 2));
+    }
+    parts.push(part(cyl(r, r * 0.15, tip), 0, -shank - tip / 2));
+    // thread rings
+    const pitch = Math.max(p.d * 0.3, 0.02),
+      start = p.type === "flat" ? headH : 0.1 * p.d,
+      end = shank + tip * 0.6;
+    if (p.type !== "wood") {
+      for (let y = start + pitch; y < end; y += pitch) parts.push(part(cyl(r * 1.2, r * 1.2, pitch * 0.5, 20), 0, -y));
+    } else {
+      for (let y = start + pitch; y < end; y += pitch) {
+        const k = 1 - Math.max(0, (y - shank) / tip) * 0.8;
+        parts.push(part(cyl(r * 1.35 * k, r * 1.35 * k, pitch * 0.5, 20), 0, -y));
+      }
+    }
+    // head
+    if (p.type === "pan" || p.type === "wood") {
+      parts.push(part(cyl(headD / 2, headD / 2, headH * 0.65, 32), 0, headH * 0.325));
+      parts.push(part(cyl(headD / 2 * 0.6, headD / 2, headH * 0.35, 32), 0, headH * 0.825));
+    } else if (p.type === "socket") {
+      parts.push(part(cyl(headD / 2, headD / 2, headH, 32), 0, headH / 2));
+    } else if (p.type === "hex") {
+      parts.push(part(cyl(headD / 2, headD / 2, headH, 6), 0, headH / 2));
+    }
+    return { geo: merge(parts), headH, headD };
+  }
 
-  let drag = null;
+  // ---------- The screw object ----------
+  function make(point, n) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0xb8bcc4, metalness: 0.8, roughness: 0.35, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+    mesh.userData.screw = { n: n.clone() };
+    mesh.userData.imported = true;
+    mesh.userData.height = 0;
+    mesh.userData.name = "Screw";
+    mesh.position.copy(point);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
+    rebuild(mesh);
+    return mesh;
+  }
+  function rebuild(m) {
+    const { geo } = buildGeo(P);
+    if (m.geometry) m.geometry.dispose();
+    m.geometry = geo;
+    m.userData.screw.p = Object.assign({}, P);
+    if (m.userData.edges) m.remove(m.userData.edges);
+    m.userData.edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: 0x555a66 }));
+    m.add(m.userData.edges);
+    m.updateMatrixWorld(true);
+  }
+
+  // ---------- Panel ----------
+  const box = document.createElement("div");
+  box.style.cssText =
+    "position:fixed;left:84px;top:90px;z-index:7;width:176px;box-sizing:border-box;border-radius:16px;background:rgba(28,31,38,.94);border:1px solid #3a4150;color:#fff;font:13px -apple-system,sans-serif;user-select:none;display:none";
+  const head = document.createElement("div");
+  head.textContent = "☰ Screws";
+  head.style.cssText = "padding:6px 10px;color:#9aa4b5;cursor:grab;touch-action:none";
+  box.appendChild(head);
+  const body = document.createElement("div");
+  body.style.cssText = "padding:0 8px 8px";
+  box.appendChild(body);
+  box.dataset.dragkey = "screws";
+  document.body.appendChild(box);
+  if (typeof makeDraggable === "function") makeDraggable(box, head);
+
+  // ---- Toolbar category "Screws" under Shape, with a flyout of screw types ----
+  const ico = {
+    pan: '<path d="M6 8a6 4 0 0 1 12 0z"/><path d="M10 8v12l2 2 2-2V8"/><path d="M10 12h4M10 16h4"/>',
+    socket: '<path d="M6 3h12v5H6z"/><path d="M10 5.5h4"/><path d="M10 8v12l2 2 2-2V8"/><path d="M10 12h4M10 16h4"/>',
+    flat: '<path d="M4 4h16L14 9v11l-2 2-2-2V9z"/><path d="M10 13h4M10 17h4"/>',
+    hex: '<path d="M8 3h8l3 3v3H5V6z"/><path d="M10 9v11l2 2 2-2V9"/><path d="M10 13h4M10 17h4"/>',
+    set: '<path d="M9 3v17l3 2 3-2V3z"/><path d="M9 8h6M9 12h6M9 16h6"/>',
+    wood: '<path d="M6 8a6 4 0 0 1 12 0z"/><path d="M9 8l3 14 3-14"/><path d="M9.5 12l5 1M10 16l4 1"/>'
+  };
+  const svg = (k) => '<svg viewBox="0 0 24 24">' + ico[k] + "</svg>";
+  const grp = document.createElement("div");
+  grp.className = "grp";
+  const open = document.createElement("button");
+  open.className = "bubble";
+  open.innerHTML = svg("socket") + "<span>Screws</span>";
+  const fly = document.createElement("div");
+  fly.className = "flyout";
+  document.body.appendChild(fly);
+  if (typeof flyouts !== "undefined") flyouts.push(fly);
+  grp.appendChild(open);
+  if (typeof bar !== "undefined") bar.appendChild(grp);
+  else document.body.appendChild(grp);
+  const typeBtns = {};
+  Object.keys(TYPES).forEach((k) => {
+    const b = document.createElement("button");
+    b.className = "bubble";
+    b.innerHTML = svg(k) + "<span>" + TYPES[k].split(" (")[0].replace(" head", "").replace("Set screw", "Set") + "</span>";
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      P.type = k;
+      typeSel.value = k;
+      open.innerHTML = svg(k) + "<span>Screws</span>";
+      open.classList.add("active");
+      fly.classList.remove("open");
+      box.style.display = "none";
+      startPlacing();
+    });
+    typeBtns[k] = b;
+    fly.appendChild(b);
+  });
+  function placeFly() {
+    if (!fly.classList.contains("open")) return;
+    const r = open.getBoundingClientRect();
+    const h = fly.offsetHeight;
+    // line the first screw up beside Select (top of the bar) so it sits clear of the bottom text
+    const sb = typeof buttons !== "undefined" && buttons.select ? buttons.select.getBoundingClientRect() : r;
+    let top = typeof bar !== "undefined" ? bar.getBoundingClientRect().top : sb.top - 4; // outer border lines up with the bar border
+    let limit = innerHeight - 8;
+    const tgl = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.indexOf("Cut object:") === 0);
+    if (tgl && tgl.offsetParent !== null) limit = Math.min(limit, tgl.getBoundingClientRect().top - 8);
+    top = Math.max(8, Math.min(top, limit - h));
+    fly.style.left = r.right + 10 + "px";
+    fly.style.top = top + "px";
+  }
+  open.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const was = fly.classList.contains("open");
+    if (typeof closeFlyouts === "function") closeFlyouts();
+    if (!was) {
+      fly.classList.add("open");
+      placeFly();
+      requestAnimationFrame(() => { placeFly(); requestAnimationFrame(placeFly); });
+      setTimeout(placeFly, 200);
+    }
+  });
+  const closePanel = () => {
+    box.style.display = "none";
+    open.classList.remove("active");
+    stopPlacing();
+  };
+  const xb = document.createElement("span");
+  xb.textContent = "\u2715";
+  xb.style.cssText = "position:absolute;right:6px;top:4px;width:30px;height:26px;line-height:26px;text-align:center;cursor:pointer;font-size:15px;z-index:2";
+  box.style.position = "fixed";
+  ["pointerdown", "pointerup", "touchstart", "mousedown"].forEach((t) => xb.addEventListener(t, (e) => e.stopPropagation()));
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "Close";
+  closeBtn.style.cssText = "width:100%;height:32px;border:none;border-radius:10px;background:#3a4150;color:#fff;font-size:12px;margin:2px 0 10px";
+  closeBtn.addEventListener("click", () => closePanel());
+  body.appendChild(closeBtn);
+  const kill = (e) => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); closePanel(); };
+  xb.addEventListener("pointerdown", kill, true);
+  xb.addEventListener("click", kill, true);
+  xb.style.zIndex = "60";
+  
+  box.appendChild(xb);
+
+  const row = (label, el) => {
+    const r = document.createElement("div");
+    r.style.cssText = "display:flex;align-items:center;gap:6px;margin:6px 0";
+    const l = document.createElement("span");
+    l.textContent = label;
+    l.style.cssText = "width:54px;font-size:11px;color:#9aa4b5";
+    r.append(l, el);
+    body.appendChild(r);
+    return r;
+  };
+  const field = "flex:1;min-width:0;height:30px;box-sizing:border-box;border:1px solid #3a4150;border-radius:8px;background:#1b1f27;color:#fff;padding:0 6px;font-size:13px";
+  const sel = (opts, val, fn) => {
+    const s = document.createElement("select");
+    Object.keys(opts).forEach((k) => {
+      const o = document.createElement("option");
+      o.value = k;
+      o.textContent = opts[k];
+      s.appendChild(o);
+    });
+    s.value = val;
+    s.style.cssText = field;
+    s.onchange = () => fn(s.value);
+    return s;
+  };
+  const num = (fn) => {
+    const i = document.createElement("input");
+    i.type = "number";
+    i.step = "any";
+    i.min = "0";
+    i.style.cssText = field;
+    i.onchange = fn;
+    return i;
+  };
+  const sizeNames = {};
+  Object.keys(SIZES).forEach((k) => (sizeNames[k] = k + " (" + SIZES[k] + " mm)"));
+  sizeNames.custom = "Custom";
+  const typeSel = sel(TYPES, P.type, (v) => ((P.type = v), apply()));
+  const sizeSel = sel(sizeNames, P.size, (v) => {
+    P.size = v;
+    if (SIZES[v]) P.d = mm2s(SIZES[v]);
+    sync();
+    apply();
+  });
+  const dIn = num(() => ((P.d = toScene(parseFloat(dIn.value) || 0.1)), (P.size = "custom"), (sizeSel.value = "custom"), apply()));
+  const lIn = num(() => ((P.L = toScene(parseFloat(lIn.value) || 1)), apply()));
+  const hIn = num(() => ((P.headD = toScene(parseFloat(hIn.value) || 0)), apply()));
+  const fIn = num(() => (P.fit = toScene(parseFloat(fIn.value) || 0)));
+  const unitName = document.createElement("div");
+  unitName.style.cssText = "color:#9aa4b5;font-size:11px;margin:2px 0";
+  row("Type", typeSel);
+  row("Size", sizeSel);
+  row("Diameter", dIn);
+  row("Length", lIn);
+  row("Head width", hIn);
+  row("Hole gap", fIn);
+  body.appendChild(unitName);
+  const note = document.createElement("div");
+  note.style.cssText = "color:#9aa4b5;font-size:11px;margin:6px 0;min-height:28px";
+  const btn = (t, fn, bg) => {
+    const b = document.createElement("button");
+    b.textContent = t;
+    b.onclick = fn;
+    b.style.cssText = "flex:1;height:34px;border:none;border-radius:10px;background:" + (bg || "#2f8cff") + ";color:#fff;font-size:12px;padding:0 4px";
+    return b;
+  };
+  const placeBtn = btn("Place on surface", () => (placing ? stopPlacing() : startPlacing()));
+  const r1 = document.createElement("div");
+  r1.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  r1.append(placeBtn, btn("Flip", flip, "#3a4150"));
+  const r2 = document.createElement("div");
+  r2.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  const r3 = document.createElement("div");
+  r3.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  const ringBtn = btn("Rings: On", () => {
+    ringsOn = !ringsOn;
+    ringBtn.textContent = "Rings: " + (ringsOn ? "On" : "Off");
+    ringBtn.style.background = ringsOn ? "#2f8cff" : "#3a4150";
+  }, "#2f8cff");
+  let follow = true;
+  const followBtn = btn("Follow threads: On", () => {
+    follow = !follow;
+    followBtn.textContent = "Follow threads: " + (follow ? "On" : "Off");
+    followBtn.style.background = follow ? "#2f8cff" : "#3a4150";
+  }, "#2f8cff");
+  const r4 = document.createElement("div");
+  r4.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  r4.append(followBtn, btn("Duplicate", () => dup(), "#3a4150"));
+  r3.append(btn("Upright", () => upright(), "#3a4150"), ringBtn);
+  r2.append(btn("Set (cut hole)", setScrew, "#1f9d63"), btn("Delete", del, "#8a2f2f"));
+  body.append(r1, r3, r4, r2, note);
+
+  function sync() {
+    dIn.value = Math.round(toDisplay(P.d) * 100) / 100;
+    lIn.value = Math.round(toDisplay(P.L) * 100) / 100;
+    hIn.value = Math.round(toDisplay(P.headD) * 100) / 100;
+    fIn.value = Math.round(toDisplay(P.fit) * 1000) / 1000;
+    unitName.textContent = "Sizes in " + UNITS[unitIndex].name + ". Head width 0 = automatic.";
+  }
+  sync();
+  setInterval(() => box.style.display !== "none" && document.activeElement.tagName !== "INPUT" && sync(), 800);
+
+  function apply() {
+    if (cur && cur.parent) rebuild(cur);
+  }
+  function say(t, ok) {
+    note.textContent = t;
+    if (window.cadToast) window.cadToast(t, ok !== false);
+  }
+
+  // ---------- Placing ----------
+  function startPlacing() {
+    placing = true;
+    placeBtn.textContent = "Tap a surface… (tap to stop)";
+    placeBtn.style.background = "#d98a1f";
+    note.textContent = "Tap the surface where the screw goes. It points into the object.";
+  }
+  function stopPlacing() {
+    placing = false;
+    placeBtn.textContent = "Place on surface";
+    placeBtn.style.background = "#2f8cff";
+  }
+  const hostEl = document.getElementById("view");
+  const V3 = THREE.Vector3;
+  const inView = (e) => e.target === hostEl || hostEl.contains(e.target) || e.target === renderer.domElement;
+  const drawing = () => tool === "line" || tool === "rect" || tool === "circle";
+
+  // select an existing screw and load its size into the panel
+  window.cadPickScrew = (m) => pick(m);
+  function pick(m) {
+    cur = m;
+    const p = m.userData.screw.p;
+    if (p) {
+      Object.assign(P, p);
+      typeSel.value = P.type;
+      sizeSel.value = SIZES[P.size] ? P.size : "custom";
+      sync();
+    }
+    box.style.display = "block";
+    open.classList.add("active");
+  }
+  function place(point, n) {
+    const s = make(point, n);
+    perform({
+      redo() {
+        addToScene(s);
+      },
+      undo() {
+        removeFromScene(s);
+      }
+    });
+    pick(s);
+    stopPlacing();
+    say(
+      Math.abs(n.y) > 0.99
+        ? "Screw placed. Drag the screw to move it, drag the two rings to tilt it, then press Set to cut the hole."
+        : "Screw placed. Drag the rings to tilt it. Holes are cut for upright screws (use Upright).",
+      true
+    );
+  }
+
+  let drag = null,
+    ringsOn = true;
+  // ---- rotation rings: two half circles (180 degrees each) ----
+  const ringMat = (c) => new THREE.MeshBasicMaterial({ color: c, depthTest: false, transparent: true, opacity: 0.9 });
+  const mkRing = (c, flat) => {
+    const g = new THREE.TorusGeometry(1, 0.035, 8, 64, Math.PI);
+    if (!flat) g.rotateY(Math.PI / 2);
+    const r = new THREE.Mesh(g, ringMat(c));
+    r.renderOrder = 999;
+    r.visible = false;
+    r.userData.noSelect = true;
+    return r;
+  };
+  const ringA = mkRing(0xff5a5a, true); // swings sideways, turns about the world Z axis
+  const ringB = mkRing(0x4f9dff, false); // swings front/back, turns about the world X axis
+  ringA.userData.axis = new V3(0, 0, 1);
+  ringA.userData.u = new V3(1, 0, 0);
+  ringA.userData.v = new V3(0, 1, 0);
+  ringB.userData.axis = new V3(1, 0, 0);
+  ringB.userData.u = new V3(0, 1, 0);
+  ringB.userData.v = new V3(0, 0, 1);
+  scene.add(ringA, ringB);
+  (function loop() {
+    const on = ringsOn && cur && cur.parent && box.style.display !== "none" && cur.visible !== false;
+    [ringA, ringB].forEach((r) => {
+      r.visible = !!on;
+      if (on) {
+        r.position.copy(cur.position);
+        const R = Math.max(P.L * 0.75, (P.headD > 0 ? P.headD : P.d * 2) * 1.2, 0.6);
+        r.scale.setScalar(R);
+        r.material.opacity = drag && drag.ring === r ? 1 : 0.8;
+      }
+    });
+    requestAnimationFrame(loop);
+  })();
+
+  const tmp = new V3();
+  function surfacePoint(e, ignore) {
+    setRay(e);
+    const targets = shapes.filter((x) => x !== ignore && x.visible !== false && !x.userData.screw && !x.userData.isLine);
+    const hit = raycaster.intersectObjects(targets, false)[0];
+    if (hit) {
+      const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new V3(0, 1, 0);
+      if (n.dot(raycaster.ray.direction) > 0) n.negate();
+      return { point: hit.point.clone(), n };
+    }
+    const g = typeof ground !== "undefined" ? raycaster.intersectObject(ground)[0] : null;
+    if (g) return { point: g.point.clone(), n: new V3(0, 1, 0) };
+    const pl = new THREE.Plane(new V3(0, 1, 0), 0);
+    return raycaster.ray.intersectPlane(pl, tmp) ? { point: tmp.clone(), n: new V3(0, 1, 0) } : null;
+  }
+  function ringAngle(r, e) {
+    setRay(e);
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(r.userData.axis, cur.position);
+    if (!raycaster.ray.intersectPlane(pl, tmp)) return null;
+    tmp.sub(cur.position);
+    return Math.atan2(tmp.dot(r.userData.v), tmp.dot(r.userData.u));
+  }
+  function setN(m) {
+    m.userData.screw.n.set(0, 1, 0).applyQuaternion(m.quaternion).normalize();
+    m.updateMatrixWorld(true);
+  }
+  function startDrag(e) {
+    const rings = [ringA, ringB].filter((r) => r.visible);
+    setRay(e);
+    const rh = rings.length ? raycaster.intersectObjects(rings, false)[0] : null;
+    if (rh) {
+      const a = ringAngle(rh.object, e);
+      if (a === null) return false;
+      drag = { kind: "rot", ring: rh.object, last: a, q0: cur.quaternion.clone() };
+      return true;
+    }
+    const sh = shapes.filter((x) => x.userData.screw && x.visible !== false);
+    const h = raycaster.intersectObjects(sh, false)[0];
+    if (h) {
+      if (h.object !== cur) pick(h.object);
+      // drag in a plane facing the camera, so the screw can slide into holes and through surfaces
+      const camDir = new V3();
+      camera.getWorldDirection(camDir);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, cur.position);
+      const hp = new V3();
+      setRay(e);
+      drag = { kind: "move", p0: cur.position.clone(), plane, grab: new V3() };
+      if (raycaster.ray.intersectPlane(plane, hp)) drag.grab = cur.position.clone().sub(hp);
+      return true;
+    }
+    return false;
+  }
+  let swallowUp = false;
   addEventListener(
     "pointerdown",
     (e) => {
-      if (e.target !== el || !selected || !sides[0].visible) return;
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      setRay(e);
-      const hit = raycaster.intersectObjects(sides, true)[0];
-      if (!hit) return;
-      let a = hit.object;
-      while (a && !a.userData.ax) a = a.parent;
-      const m = selected,
-        inf = sideInfo(m);
-      if (!inf) return;
-      const dir = dirOf(a, inf),
-        c = m.position.clone();
-      const s0 = scr(c),
-        s1 = scr(c.clone().add(dir));
-      drag = {
-        id: e.pointerId,
-        m,
-        inf,
-        a,
-        dir,
-        x: e.clientX,
-        y: e.clientY,
-        sx: s1.x - s0.x,
-        sy: s1.y - s0.y,
-        size0: a.userData.ax === "x" ? inf.W : inf.D,
-        from: { sx: m.scale.x, sz: m.scale.z, px: m.position.x, pz: m.position.z }
-      };
-      el.setPointerCapture(e.pointerId);
-      e.stopImmediatePropagation();
+      try {
+        if (!inView(e) || (e.pointerType === "mouse" && e.button !== 0)) return;
+        if (placing) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          swallowUp = true;
+          const sp = surfacePoint(e, null);
+          if (!sp) return say("Tap on the grid or an object's surface.", false);
+          place(sp.point, sp.n);
+          return;
+        }
+        if (drawing() || box.style.display === "none" && !shapes.some((x) => x.userData.screw)) return;
+        if (box.style.display === "none") {
+          // tapping a screw while the panel is closed reselects it
+          setRay(e);
+          const h = raycaster.intersectObjects(shapes.filter((x) => x.userData.screw && x.visible !== false), false)[0];
+          if (!h) return;
+          pick(h.object);
+        }
+        if (startDrag(e)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          swallowUp = true;
+        }
+      } catch (err) {
+        say("Screw error: " + (err.message || err), false);
+      }
     },
     true
   );
   addEventListener(
     "pointermove",
     (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      const d0 = ((e.clientX - drag.x) * drag.sx + (e.clientY - drag.y) * drag.sy) / (drag.sx * drag.sx + drag.sy * drag.sy || 1);
-      const size = Math.max(0.5, Math.round((drag.size0 + d0) * 4) / 4),
-        d = size - drag.size0,
-        m = drag.m,
-        f = drag.from;
-      if (drag.a.userData.ax === "x") m.scale.x = size / drag.inf.p.width;
-      else m.scale.z = size / drag.inf.p.depth;
-      m.position.x = f.px + (drag.dir.x * d) / 2;
-      m.position.z = f.pz + (drag.dir.z * d) / 2;
-      arrow.position.x = m.position.x;
-      arrow.position.z = m.position.z;
-      showMeasure((drag.a.userData.ax === "x" ? "Width: " : "Depth: ") + fmt(size));
+      if (!drag) return;
       e.stopImmediatePropagation();
+      try {
+        if (drag.kind === "rot") {
+          const a = ringAngle(drag.ring, e);
+          if (a === null) return;
+          let d = a - drag.last;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          drag.last = a;
+          cur.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(drag.ring.userData.axis, d));
+          setN(cur);
+        } else {
+          setRay(e);
+          const hp = new V3();
+          if (raycaster.ray.intersectPlane(drag.plane, hp)) {
+            cur.position.copy(hp.add(drag.grab));
+            if (cur.position.y < 0) cur.position.y = 0;
+            // drop it back in its own hole: snap to the spot it was set in
+            const home = cur.userData.screw.home;
+            if (home && cur.position.distanceTo(home.p) < 0.35) {
+              cur.position.copy(home.p);
+              cur.quaternion.copy(home.q);
+              setN(cur);
+              if (window.showMeasure) showMeasure("Back in its hole");
+            }
+            cur.updateMatrixWorld(true);
+          }
+        }
+      } catch (err) {
+        say("Screw error: " + (err.message || err), false);
+      }
     },
     true
   );
-  addEventListener(
-    "pointerup",
-    (e) => {
-      if (drag && e.pointerId === drag.id) {
-        const m = drag.m,
-          from = drag.from,
-          to = { sx: m.scale.x, sz: m.scale.z, px: m.position.x, pz: m.position.z };
-        drag = null;
-        hideMeasure();
-        const set = (s) => {
-          m.scale.x = s.sx;
-          m.scale.z = s.sz;
-          m.position.x = s.px;
-          m.position.z = s.pz;
-        };
-        if (from.sx !== to.sx || from.sz !== to.sz) {
-          undoStack.push({ redo: () => set(to), undo: () => set(from) });
-          redoStack.length = 0;
-          carve(m);
+  const endDrag = (e) => {
+    if (swallowUp) {
+      e.stopImmediatePropagation();
+      swallowUp = false;
+    }
+    if (!drag) return;
+    const d = drag,
+      m = cur;
+    drag = null;
+    if (d.kind === "rot") {
+      const q1 = m.quaternion.clone(),
+        q0 = d.q0;
+      if (q1.angleTo(q0) < 1e-4) return;
+      undoStack.push({
+        redo() {
+          m.quaternion.copy(q1);
+          setN(m);
+        },
+        undo() {
+          m.quaternion.copy(q0);
+          setN(m);
         }
-        e.stopImmediatePropagation();
+      });
+    } else {
+      const p1 = m.position.clone(),
+        p0 = d.p0;
+      if (p1.distanceTo(p0) < 1e-4) return;
+      undoStack.push({
+        redo() {
+          m.position.copy(p1);
+          m.updateMatrixWorld(true);
+        },
+        undo() {
+          m.position.copy(p0);
+          m.updateMatrixWorld(true);
+        }
+      });
+    }
+    redoStack.length = 0;
+  };
+  addEventListener("pointerup", endDrag, true);
+  addEventListener("pointercancel", endDrag, true);
+
+  function dup() {
+    if (!cur || !cur.parent) return say("Place a screw first.", false);
+    const n = cur.userData.screw.n.clone();
+    Object.assign(P, cur.userData.screw.p || {});
+    const s = make(cur.position.clone().add(new V3(0.6, 0, 0.6)), n);
+    s.quaternion.copy(cur.quaternion);
+    setN(s);
+    perform({
+      redo() {
+        addToScene(s);
+      },
+      undo() {
+        removeFromScene(s);
+      }
+    });
+    pick(s);
+    say("Duplicated. Drag the copy where you want it, then press Set to cut another threaded hole.", true);
+  }
+  function upright() {
+    if (!cur) return say("Place a screw first.", false);
+    const m = cur,
+      q0 = m.quaternion.clone(),
+      n = new V3(0, m.userData.screw.n.y >= 0 ? 1 : -1, 0),
+      q1 = new THREE.Quaternion().setFromUnitVectors(new V3(0, 1, 0), n);
+    perform({
+      redo() {
+        m.quaternion.copy(q1);
+        setN(m);
+      },
+      undo() {
+        m.quaternion.copy(q0);
+        setN(m);
+      }
+    });
+  }
+
+  function flip() {
+    if (!cur) return say("Place a screw first.", false);
+    const old = { q: cur.quaternion.clone(), n: cur.userData.screw.n.clone() };
+    const n = old.n.clone().negate();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
+    const m = cur;
+    perform({
+      redo() {
+        m.quaternion.copy(q);
+        m.userData.screw.n.copy(n);
+        m.updateMatrixWorld(true);
+      },
+      undo() {
+        m.quaternion.copy(old.q);
+        m.userData.screw.n.copy(old.n);
+        m.updateMatrixWorld(true);
+      }
+    });
+  }
+  function del() {
+    if (!cur) return;
+    const m = cur;
+    perform({
+      redo() {
+        removeFromScene(m);
+      },
+      undo() {
+        addToScene(m);
+      }
+    });
+    cur = null;
+  }
+
+  // ---------- Set: cut a clearance hole in everything the shank passes through ----------
+  async function setScrew() {
+    if (!cur || !cur.parent) return say("Place a screw first.", false);
+    const m = cur,
+      n = m.userData.screw.n,
+      p = m.userData.screw.p;
+    // Preferred route: cut with the kernel in the screw's own direction (any angle, with threads)
+    if (window.cadAxisHole) {
+      const L0 = Math.max(p.L, p.d),
+        dirIn = n.clone().negate(),
+        rr0 = p.d / 2 + Math.max(0, P.fit) / 2;
+      const end0 = m.position.clone().addScaledVector(dirIn, L0);
+      const bx = new THREE.Box3().setFromPoints([m.position, end0]).expandByScalar(rr0 * 1.3);
+      const hs0 = shapes.filter(
+        (s) => s !== m && !s.userData.screw && s.visible !== false && !s.userData.isLine && new THREE.Box3().setFromObject(s).intersectsBox(bx)
+      );
+      if (!hs0.length) return say("The screw isn't passing through anything yet. Move it into an object or press Flip.", false);
+      const gap0 = Math.max(0, P.fit) / 2,
+        r00 = p.d / 2;
+      let core = rr0,
+        grooves = [];
+      if (follow && p.type !== "set") {
+        const tip0 = Math.min(L0 / 4, p.d * 0.9),
+          shank0 = L0 - tip0,
+          pitch0 = Math.max(p.d * 0.3, 0.02),
+          start0 = p.type === "flat" ? p.d * 0.5 : 0.1 * p.d,
+          end1 = shank0 + tip0 * 0.6;
+        core = r00 * 0.78 + gap0;
+        const rg0 = r00 * (p.type === "wood" ? 1.35 : 1.2) + gap0;
+        for (let y = start0 + pitch0, c = 0; y < end1 && c < 40; y += pitch0, c++)
+          grooves.push({ s0: y - pitch0 * 0.25, s1: y + pitch0 * 0.25, r: rg0 });
+      }
+      const c0 = window.cadAxisHole(hs0, m.position.clone(), dirIn, core, L0, grooves, "Hole cut for the screw" + (grooves.length ? " with threads" : ""));
+      if (c0) {
+        m.userData.screw.set = true;
+        m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
+        say("Hole cut in " + c0 + " object" + (c0 > 1 ? "s" : "") + (grooves.length ? " with thread grooves." : "."), true);
         return;
       }
-      // Top arrow released: carve after the app has finished its own handling
-      if (typeof mode !== "undefined" && mode === "arrow" && selected) {
-        const m = selected;
-        setTimeout(() => carve(m), 0);
+      window.cadAxisWhy = window.cadAxisHoleWhy;
+    }
+    if (Math.abs(n.y) < 0.99) {
+      // screw pointing sideways along the X or Z axis: cut with the kernel
+      const ax = Math.abs(n.x) > 0.99 ? "x" : Math.abs(n.z) > 0.99 ? "z" : null;
+      if (!ax) return say("Tilted screws can't cut a hole. Press Upright, or turn it to point straight along the grid.", false);
+      if (!window.cadSideHole) return say("pushpull.js is out of date, so side holes can't be cut.", false);
+      const sgn = ax === "x" ? Math.sign(n.x) : Math.sign(n.z);
+      const L2 = Math.max(p.L, p.d);
+      const base = ax === "x" ? m.position.x : m.position.z;
+      const a0 = sgn > 0 ? base - L2 : base,
+        a1 = sgn > 0 ? base : base + L2;
+      const rr = p.d / 2 + Math.max(0, P.fit) / 2;
+      const box = new THREE.Box3(
+        new THREE.Vector3(m.position.x - (ax === "x" ? L2 : rr), m.position.y - rr, m.position.z - (ax === "z" ? L2 : rr)),
+        new THREE.Vector3(m.position.x + (ax === "x" ? L2 : rr), m.position.y + rr, m.position.z + (ax === "z" ? L2 : rr))
+      );
+      const hs = shapes.filter(
+        (s) => s !== m && !s.userData.screw && s.visible !== false && !s.userData.isLine && new THREE.Box3().setFromObject(s).intersectsBox(box)
+      );
+      if (!hs.length) return say("The screw isn't passing through anything yet. Move it into an object or press Flip.", false);
+      const c = await new Promise((res) => res(window.cadSideHole(hs, ax, m.position.clone(), rr, a0 - 0.001, a1 + 0.001, "Hole cut for the screw (gap " + fmt(P.fit) + ")")));
+      if (c) {
+        m.userData.screw.set = true;
+        m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
+        say("Plain hole only, no threads (" + (window.cadAxisWhy || "kernel route not used") + ").", true);
+      } else say("Couldn't cut a side hole: " + (window.cadAxisWhy || window.cadSideHoleWhy || "unknown reason"), false);
+      return;
+    }
+    if (!window.cadCutHoles) return say("carve.js is missing, so holes can't be cut.", false);
+    const top = m.position.y,
+      L = Math.max(p.L, p.d);
+    const y0 = n.y > 0 ? top - L : top,
+      y1 = n.y > 0 ? top : top + L;
+    const rh = p.d / 2 + Math.max(0, P.fit) / 2;
+    const ring = [];
+    for (let i = 0; i <= 48; i++) {
+      const a = (i / 48) * Math.PI * 2;
+      ring.push([m.position.x + Math.cos(a) * rh, m.position.z + Math.sin(a) * rh]);
+    }
+    const sb = new THREE.Box3(
+      new THREE.Vector3(m.position.x - rh, y0, m.position.z - rh),
+      new THREE.Vector3(m.position.x + rh, y1, m.position.z + rh)
+    );
+    const hosts = shapes.filter(
+      (s) =>
+        s !== m &&
+        !s.userData.screw &&
+        s.visible !== false &&
+        !s.userData.isLine &&
+        (Math.abs(s.userData.height || 0) > 0.05 || s.userData.imported || s.userData.fromLines) &&
+        new THREE.Box3().setFromObject(s).intersectsBox(sb)
+    );
+    if (!hosts.length) return say("The screw isn't passing through anything yet, so there is nothing to cut. Move it into an object.", false);
+    const circ = (rad) => {
+      const o = [];
+      for (let i = 0; i <= 48; i++) {
+        const a = (i / 48) * Math.PI * 2;
+        o.push([m.position.x + Math.cos(a) * rad, m.position.z + Math.sin(a) * rad]);
       }
-    },
-    true
-  );
+      return o;
+    };
+    let ok;
+    if (follow && p.type !== "set") {
+      // core hole at the thread root, then a groove for every thread ring so the hole follows the threads
+      const gap = Math.max(0, P.fit) / 2,
+        r0 = p.d / 2,
+        tip = Math.min(L / 4, p.d * 0.9),
+        shank = L - tip,
+        pitch = Math.max(p.d * 0.3, 0.02),
+        headH = p.type === "flat" ? p.d * 0.5 : 0,
+        start = p.type === "flat" ? headH : 0.1 * p.d,
+        end = shank + tip * 0.6;
+      // bands from the bottom of the hole to the top: thin core radius, wider radius where a thread ring sits
+      const rc = r0 * 0.78 + gap,
+        rg = r0 * (p.type === "wood" ? 1.35 : 1.2) + gap,
+        hh = pitch * 0.5,
+        yz = (y) => (n.y > 0 ? top - y : top + y);
+      const gro = [];
+      for (let y = start + pitch, c = 0; y < end && c < 60; y += pitch, c++) {
+        const a1 = yz(y) - hh / 2,
+          a2 = yz(y) + hh / 2;
+        gro.push([Math.max(y0, a1), Math.min(y1, a2)]);
+      }
+      gro.sort((u, v) => u[0] - v[0]);
+      const bands = [];
+      let cy = y0 - 0.001;
+      gro.forEach(([g0, g1]) => {
+        if (g1 - g0 < 1e-4) return;
+        if (g0 > cy + 1e-4) bands.push({ ring: circ(rc), y0: cy, y1: g0 });
+        bands.push({ ring: circ(rg), y0: g0, y1: g1 });
+        cy = g1;
+      });
+      if (y1 + 0.001 > cy + 1e-4) bands.push({ ring: circ(rc), y0: cy, y1: y1 + 0.001 });
+      ok = await window.cadCutHoles(hosts, bands, 0, 0, null, "Threaded hole cut");
+    } else ok = await window.cadCutHoles(hosts, ring, y0 - 0.001, y1 + 0.001, null, "Hole cut for the screw (gap " + fmt(P.fit) + ")");
+    if (ok) {
+      m.userData.screw.set = true;
+      m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
+      say("Plain hole only, no threads (" + (window.cadAxisWhy || "kernel route not used") + ").", true);
+    } else say("Couldn't cut a hole. Kernel cut: " + (window.cadAxisWhy || "not tried") + ". Simple cut: this shape type isn't supported.", false);
+  }
 
-  (function frame() {
-    requestAnimationFrame(frame);
-    const m = selected,
-      inf = m && m.visible !== false && !window.cadFaceArrows && sideInfo(m);
-    sides.forEach((a) => (a.visible = !!inf));
-    if (!inf) return;
-    sides.forEach((a) => {
-      const dir = dirOf(a, inf),
-        half = a.userData.ax === "x" ? inf.W / 2 : inf.D / 2;
-      a.position.set(m.position.x, m.position.y, m.position.z).addScaledVector(dir, half + 0.05);
-      a.quaternion.setFromUnitVectors(UP, dir);
-    });
-  })();
+  // ---- Keep every flyout inside the page ----
+  function fit(f) {
+    if (!f.classList.contains("open")) return;
+    // use layout values (not animated rects) so the flyout keeps its normal gap from the bar
+    const h = f.offsetHeight, w = f.offsetWidth;
+    let top = f.offsetTop, left = f.offsetLeft;
+    const limit = innerHeight - 8;
+    if (h > limit - 8) {
+      f.style.maxHeight = limit - 8 + "px";
+      f.style.overflowY = "auto";
+    }
+    if (top + h > limit) top = limit - h;
+    if (left + w > innerWidth - 8) left = innerWidth - 8 - w;
+    top = Math.max(8, top);
+    if (top !== f.offsetTop) f.style.top = top + "px";
+    if (left !== f.offsetLeft) f.style.left = left + "px";
+  }
+  if (typeof flyouts !== "undefined") {
+    const mo = new MutationObserver((l) => l.forEach((m) => fit(m.target)));
+    flyouts.forEach((f) => f !== fly && mo.observe(f, { attributes: true, attributeFilter: ["class"] }));
+    addEventListener("resize", () => flyouts.forEach((f) => (f === fly ? placeFly() : fit(f))));
+  }
+
+  // A screw is never stretched by the height arrow
+  if (typeof setHeight === "function") {
+    const _sh = setHeight;
+    setHeight = function (m) {
+      if (m && m.userData && m.userData.screw) return;
+      return _sh.apply(this, arguments);
+    };
+  }
+  if (typeof showArrow === "function") {
+    const _sa = showArrow;
+    showArrow = function (m) {
+      if (m && m.userData && m.userData.screw) {
+        if (typeof hideArrow === "function") hideArrow();
+        pick(m);
+        return;
+      }
+      return _sa.apply(this, arguments);
+    };
+  }
 })();

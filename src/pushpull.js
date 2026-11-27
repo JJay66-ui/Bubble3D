@@ -723,7 +723,7 @@
   function absSolid(k, m) {
     const og = m.userData.occtG;
     if (
-      og && og.s && m.position.lengthSq() < 1e-10 && Math.abs(m.scale.x - 1) < 1e-9 && Math.abs(m.scale.y - 1) < 1e-9 &&
+      og && og.s && (og.ax || "y") === "y" && m.position.lengthSq() < 1e-10 && Math.abs(m.scale.x - 1) < 1e-9 && Math.abs(m.scale.y - 1) < 1e-9 &&
       Math.abs(m.scale.z - 1) < 1e-9 && Math.abs(m.rotation.x) + Math.abs(m.rotation.y) + Math.abs(m.rotation.z) < 1e-9
     )
       return og.s; // an earlier cut result: reuse its exact solid
@@ -798,16 +798,23 @@
   // Used by the pop-up after extruding into other objects.
   //   mode "cut":   the extruded shape is an invisible cutter. It carves every object it overlaps, then disappears.
   //   mode "merge": the extruded shape and everything it overlaps become one object.
-  function meshOf(k, out, color) {
+  function meshOf(k, out, color, ax) {
     const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
     const P = new Float32Array(t.indices.length * 3);
     let hi = -Infinity,
       lo = Infinity;
     for (let i = 0; i < t.indices.length; i++) {
       const j = t.indices[i] * 3;
-      P[3 * i] = t.positions[j];
-      P[3 * i + 1] = t.positions[j + 2];
-      P[3 * i + 2] = -t.positions[j + 1];
+      if (ax && ax !== "y") {
+        const rr = AXES[ax].from(t.positions[j], t.positions[j + 2], -t.positions[j + 1]);
+        P[3 * i] = rr[0];
+        P[3 * i + 1] = rr[1];
+        P[3 * i + 2] = rr[2];
+      } else {
+        P[3 * i] = t.positions[j];
+        P[3 * i + 1] = t.positions[j + 2];
+        P[3 * i + 2] = -t.positions[j + 1];
+      }
       hi = Math.max(hi, P[3 * i + 1]);
       lo = Math.min(lo, P[3 * i + 1]);
     }
@@ -818,24 +825,33 @@
     mesh.userData.imported = true;
     mesh.userData.cutResult = true;
     mesh.userData.height = 0;
-    mesh.userData.occtG = { geo: g, s: out, ax: "y", lo: 0, H: hi - lo };
+    mesh.userData.occtG = { geo: g, s: out, ax: ax || "y", lo: 0, H: hi - lo };
     const eg = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0xffffff }));
     mesh.add(eg);
     mesh.userData.edges = eg;
     return mesh;
   }
-  window.cadBoolMany = function (B, hosts, mode) {
+  window.cadBoolMany = function (B, hosts, mode, opts) {
     const k = K();
     if (!k) throw new Error("the shape engine isn't loaded yet");
     hosts = hosts.filter((h) => h !== B && !h.userData.screw);
     if (!hosts.length) return true;
-    const tool = step("extruded shape", () => absSolid(k, B));
+    let toolY = null;
+    const getTool = () => toolY || (toolY = step("extruded shape", () => absSolid(k, B)));
+    const commonAxis = (h) => {
+      for (const ax of opts && opts.ax ? [opts.ax] : ["y", "x", "z"]) {
+        const pb = prismAnyAxis(B, ax),
+          ph = prismAnyAxis(h, ax);
+        if (pb && ph) return { ax, pb, ph };
+      }
+      return null;
+    };
     const removed = [],
       added = [];
     if (mode === "merge") {
       const fuse = k.fuse || k.union || k.fuseShapes;
       if (typeof fuse !== "function") throw new Error("this kernel has no join operation");
-      let out = tool;
+      let out = getTool();
       hosts.forEach((h) => {
         out = step("merge", () => fuse.call(k, out, absSolid(k, h)));
       });
@@ -843,6 +859,29 @@
       added.push(meshOf(k, out, hosts[0].material.color.getHex()));
     } else {
       hosts.forEach((h) => {
+        const ca = commonAxis(h);
+        if (ca && (ca.ax !== "y" || (opts && opts.through))) {
+          // drawn and cut from a side view: work in that direction
+          const mk = (pr) => {
+            let s = prismFromPoints(k, pr.pts, pr.H);
+            if (Math.abs(pr.lo) > 1e-9) s = k.translate(s, 0, 0, pr.lo);
+            return s;
+          };
+          const a2 = step("host (side)", () => mk(ca.ph)),
+            t2 = step("cutter (side)", () => {
+              if (!(opts && opts.through)) return mk(ca.pb);
+              // go straight through the whole other object
+              const lo2 = Math.min(ca.pb.lo, ca.ph.lo) - 0.05,
+                hi2 = Math.max(ca.pb.lo + ca.pb.H, ca.ph.lo + ca.ph.H) + 0.05;
+              return mk({ pts: ca.pb.pts, lo: lo2, H: hi2 - lo2 });
+            }),
+            out2 = step("cut (side)", () => k.cut(a2, t2));
+          if (k.getVolume && Math.abs(Math.abs(k.getVolume(a2)) - Math.abs(k.getVolume(out2))) < 1e-5) return;
+          removed.push(h);
+          added.push(meshOf(k, out2, h.material.color.getHex(), ca.ax));
+          return;
+        }
+        const tool = getTool();
         const a = absSolid(k, h);
         const out = step("cut", () => k.cut(a, tool));
         if (k.getVolume && Math.abs(Math.abs(k.getVolume(a)) - Math.abs(k.getVolume(out))) < 1e-5) return;

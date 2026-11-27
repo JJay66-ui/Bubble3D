@@ -646,7 +646,8 @@
   // ---------- Panel and mode buttons ----------
   const panel = document.createElement("div");
   panel.style.cssText =
-    "position:absolute;right:254px;bottom:14px;width:210px;background:rgba(28,31,38,.95);border:1px solid #3a4150;border-radius:16px;padding:10px;color:#fff;font:13px -apple-system,sans-serif;z-index:7;display:none";
+    "position:absolute;right:14px;bottom:14px;width:210px;background:rgba(28,31,38,.95);border:1px solid #3a4150;border-radius:16px;padding:10px;color:#fff;font:13px -apple-system,sans-serif;z-index:7;display:none";
+  panel.dataset.dragkey = "selpanel";
   document.body.appendChild(panel);
   function renderPanel() {
     const nF = selFaces.length,
@@ -658,6 +659,12 @@
     }
     panel.style.display = "block";
     panel.innerHTML = "";
+    const hd = document.createElement("div");
+    hd.dataset.handle = "1";
+    hd.textContent = "\u2630  Drag to move";
+    hd.style.cssText = "padding:2px 0 8px;color:#9aa4b5;font-size:12px;cursor:grab;touch-action:none";
+    panel.appendChild(hd);
+    if (typeof makeDraggable === "function") makeDraggable(panel, hd);
     const row = (...els) => {
       const d = document.createElement("div");
       d.style.cssText = "display:flex;gap:6px;margin:6px 0;align-items:center";

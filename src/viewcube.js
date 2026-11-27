@@ -68,6 +68,7 @@
   btn.style.cssText =
     "display:block;width:100%;padding:4px 0;border:none;border-top:1px solid rgba(255,255,255,.12);background:none;color:#cfd6e3;font:11px -apple-system,sans-serif;border-radius:0 0 14px 14px";
   wrap.append(head, cvs, btn);
+  wrap.dataset.dragkey = "viewcube";
   document.body.appendChild(wrap);
   makeDraggable(wrap, head);
   btn.onclick = () => setOrtho(!ortho);

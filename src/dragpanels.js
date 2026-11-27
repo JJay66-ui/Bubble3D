@@ -46,7 +46,7 @@
       const r = el.getBoundingClientRect();
       g = { el, l0: r.left, t0: r.top, x: e.clientX, y: e.clientY, body: false };
       // panels marked data-dragbody can be dragged by any empty spot
-      if (el.dataset.dragbody && !interactive(e.target)) {
+      if (el.dataset.dragbody && !interactive(e.target) && !e.target.closest("[data-handle]")) {
         g.body = true;
         el.style.left = r.left + "px";
         el.style.top = r.top + "px";

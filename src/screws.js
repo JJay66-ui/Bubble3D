@@ -163,7 +163,7 @@
     const h = fly.offsetHeight;
     // line the first screw up beside Select (top of the bar) so it sits clear of the bottom text
     const sb = typeof buttons !== "undefined" && buttons.select ? buttons.select.getBoundingClientRect() : r;
-    let top = sb.top - 4;
+    let top = typeof bar !== "undefined" ? bar.getBoundingClientRect().top : sb.top - 4; // outer border lines up with the bar border
     let limit = innerHeight - 8;
     const tgl = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.indexOf("Cut object:") === 0);
     if (tgl && tgl.offsetParent !== null) limit = Math.min(limit, tgl.getBoundingClientRect().top - 8);

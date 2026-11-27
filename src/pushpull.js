@@ -232,8 +232,11 @@
       // Shapes made by sliding faces / sheets: if it is a straight upright prism, rebuild it in OCCT
       const pr = prismOfMesh(m);
       if (pr) return { s: prismFromPoints(k, pr.pts, pr.H), H: pr.H };
+      throw new Error(
+        "this shape isn't a straight upright solid on the plate (flat top, straight walls), so OCCT can't rebuild it. Shapes built on a side view or with slanted faces aren't supported yet"
+      );
     }
-    if (m.userData.height < 0.05) throw new Error("extrude the shape first");
+    if (m.userData.height < 0.05) throw new Error("this shape is still flat. Extrude it up first (drag its arrow or use Extrude out), then chamfer or fillet");
     if (Math.abs(m.rotation.y) > 1e-6) throw new Error("rotated shapes aren't supported yet");
     if (m.userData.loopPts) {
       // Sketch shape (triangle, polygon...): rebuild it in OCCT from its corner points

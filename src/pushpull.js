@@ -385,7 +385,11 @@
   // center = app point on the hole axis, r = hole radius, a0..a1 = range along the axis.
   window.cadSideHole = function (hosts, axis, center, r, a0, a1, msg) {
     const k = K();
-    if (!k) return 0;
+    window.cadSideHoleWhy = "";
+    if (!k) {
+      window.cadSideHoleWhy = "the shape engine isn't loaded yet";
+      return 0;
+    }
     const A = AXES[axis];
     const q = A.to(center);
     const ring = [];
@@ -397,10 +401,16 @@
     hosts.forEach((m) => {
       try {
         const pr = prismAnyAxis(m, axis);
-        if (!pr) return;
+        if (!pr) {
+          window.cadSideHoleWhy = (m.userData.name || "object") + " isn't a straight prism in that direction";
+          return;
+        }
         const lo = Math.max(pr.lo, a0),
           hi = Math.min(pr.lo + pr.H, a1);
-        if (hi - lo < 0.01) return;
+        if (hi - lo < 0.01) {
+          window.cadSideHoleWhy = "the screw doesn't reach into " + (m.userData.name || "the object") + " (it spans " + pr.lo.toFixed(2) + " to " + (pr.lo + pr.H).toFixed(2) + ", screw " + a0.toFixed(2) + " to " + a1.toFixed(2) + ")";
+          return;
+        }
         const host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
         let tool = step("hole solid", () => prismFromPoints(k, ring, hi - lo));
         tool = step("hole place", () => k.translate(tool, 0, 0, lo - pr.lo));
@@ -458,7 +468,8 @@
         redoStack.length = 0;
         done++;
       } catch (e) {
-        cadToast("Side hole not cut in " + (m.userData.name || "an object") + " (" + (e.message || e) + ")");
+        window.cadSideHoleWhy = e.message || String(e);
+        console.warn("side hole failed", e);
       }
     });
     if (done) cadToast(msg || "Hole cut", true);

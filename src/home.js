@@ -345,8 +345,9 @@
   // ------------------------------------------------------------ home page
   const css = document.createElement("style");
   css.textContent = `
-#b3home{position:fixed;inset:0;z-index:200;overflow:auto;color:#fff;font-family:-apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+#b3home{position:fixed;inset:0;z-index:200;overflow-x:hidden;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;color:#fff;font-family:-apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;
   background:radial-gradient(ellipse at 25% 15%,#18395c 0%,#0d1a2c 45%,#070b13 100%);-webkit-overflow-scrolling:touch}
+#b3home::-webkit-scrollbar{display:none;width:0;height:0}
 #b3home .bub{position:absolute;border-radius:50%;pointer-events:none;
   background:radial-gradient(circle at 30% 28%,rgba(255,255,255,.75) 0,rgba(255,255,255,.12) 18%,rgba(120,200,255,.06) 55%,rgba(120,200,255,.16) 100%);
   border:1px solid rgba(190,235,255,.35);animation:b3float linear infinite}

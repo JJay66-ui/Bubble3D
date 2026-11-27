@@ -118,12 +118,20 @@
   if (typeof makeDraggable === "function") makeDraggable(box, head);
 
   const open = document.createElement("button");
-  open.textContent = "🔩 Screws";
-  open.style.cssText =
-    "position:fixed;left:14px;top:46px;z-index:9;padding:6px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(28,31,38,.7);color:#fff;font-size:12px";
-  document.body.appendChild(open);
-  open.onclick = () => {
+  open.className = "bubble";
+  open.innerHTML =
+    '<svg viewBox="0 0 24 24"><path d="M6 3h12v4H6z"/><path d="M10 7v13l2 2 2-2V7"/><path d="M10 11h4M10 15h4"/></svg><span>Screws</span>';
+  const fly = typeof buttons !== "undefined" && buttons.cut ? buttons.cut.parentNode : null;
+  if (fly) fly.appendChild(open);
+  else {
+    open.style.cssText = "position:fixed;left:14px;top:46px;z-index:9";
+    document.body.appendChild(open);
+  }
+  open.onclick = (ev) => {
+    ev.stopPropagation();
+    if (typeof closeFlyouts === "function") closeFlyouts();
     box.style.display = box.style.display === "none" ? "block" : "none";
+    open.classList.toggle("active", box.style.display !== "none");
     if (box.style.display === "none") stopPlacing();
   };
 

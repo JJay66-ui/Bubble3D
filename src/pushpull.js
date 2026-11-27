@@ -216,6 +216,171 @@
     return { pts, H };
   }
 
+  // Straight prism along any axis (shapes built on Front/Back/Left/Right views are along X or Z).
+  // The shape is turned into a "virtual" frame where its axis is up, built in OCCT, then turned back.
+  const AXES = {
+    y: { to: (v) => ({ x: v.x, y: v.y, z: v.z }), from: (x, y, z) => [x, y, z] },
+    x: { to: (v) => ({ x: v.z, y: v.x, z: v.y }), from: (x, y, z) => [y, z, x] },
+    z: { to: (v) => ({ x: v.y, y: v.z, z: v.x }), from: (x, y, z) => [z, x, y] }
+  };
+  function prismAnyAxis(m) {
+    const T = window.cadTopo(m);
+    for (const ax of ["y", "x", "z"]) {
+      const A = AXES[ax];
+      let lo = Infinity,
+        hi = -Infinity;
+      const V = T.tris.map((t) => t.v.map(A.to));
+      V.forEach((tv) => tv.forEach((v) => ((lo = Math.min(lo, v.y)), (hi = Math.max(hi, v.y)))));
+      const H = hi - lo;
+      if (H < 0.05) continue;
+      const key = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.z * 1e3);
+      const edges = new Map();
+      let tops = 0,
+        ok = true;
+      T.tris.forEach((t, i) => {
+        if (!ok || t.face === -2) return;
+        const tv = V[i],
+          ny = t.n.clone();
+        const n = A.to(ny); // virtual normal
+        if (n.y > 0.999) {
+          if (tv.some((v) => Math.abs(v.y - hi) > 1e-3)) return (ok = false);
+          tops++;
+          for (let e = 0; e < 3; e++) {
+            const a = tv[e],
+              b = tv[(e + 1) % 3],
+              ka = key(a),
+              kb = key(b),
+              ek = ka < kb ? ka + "|" + kb : kb + "|" + ka,
+              r = edges.get(ek);
+            if (r) r.n++;
+            else edges.set(ek, { n: 1, a, b, ka, kb });
+          }
+        } else if (n.y < -0.999) {
+          if (tv.some((v) => Math.abs(v.y - lo) > 1e-3)) ok = false;
+        } else if (Math.abs(n.y) > 0.01) ok = false;
+      });
+      if (!ok || !tops) continue;
+      const next = new Map();
+      let count = 0;
+      edges.forEach((r) => {
+        if (r.n !== 1) return;
+        count++;
+        [r.ka, r.kb].forEach((q) => {
+          if (!next.has(q)) next.set(q, []);
+          next.get(q).push(r);
+        });
+      });
+      if (count < 3) continue;
+      const first = [...edges.values()].find((r) => r.n === 1);
+      const pts = [[first.a.x, first.a.z]];
+      let cur = first.kb,
+        prev = first,
+        guard = 0;
+      while (cur !== first.ka && guard++ < count + 2) {
+        const r = next.get(cur).find((q) => q !== prev);
+        if (!r) break;
+        const v = r.ka === cur ? r.a : r.b;
+        pts.push([v.x, v.z]);
+        cur = r.ka === cur ? r.kb : r.ka;
+        prev = r;
+      }
+      if (cur !== first.ka || pts.length !== count) continue;
+      return { ax, pts, H, lo };
+    }
+    return null;
+  }
+  function bevelPrism(k, m, chs, kind, size) {
+    let info = m.userData.occtG && m.userData.occtG.geo === m.geometry ? m.userData.occtG : null;
+    if (!info) {
+      const pr = prismAnyAxis(m);
+      if (!pr) return false;
+      info = { ax: pr.ax, lo: pr.lo, H: pr.H, s: prismFromPoints(k, pr.pts, pr.H) };
+    }
+    const A = AXES[info.ax],
+      s = info.s;
+    const all = step("list edges", () => k.getSubShapes(s, "edge")).map((e) => {
+      const b = step("edge bounds", () => bbox(k, e));
+      return {
+        e,
+        c: new THREE.Vector3(
+          (b.min[0] + b.max[0]) / 2,
+          (b.min[2] + b.max[2]) / 2 + info.lo,
+          -(b.min[1] + b.max[1]) / 2
+        )
+      };
+    });
+    const chosen = chs.map((ch) => {
+      const q = A.to(ch.c);
+      const cv = new THREE.Vector3(q.x, q.y, q.z);
+      let best = null,
+        bd = 0.25;
+      all.forEach((o) => {
+        const d = o.c.distanceTo(cv);
+        if (d < bd) {
+          bd = d;
+          best = o.e;
+        }
+      });
+      if (!best) throw new Error("match edge: no kernel edge near the one you picked");
+      return best;
+    });
+    const edges = [...new Set(chosen)];
+    const out = step(kind, () => (kind === "fillet" ? k.fillet(s, edges, size) : k.chamfer(s, edges, size)));
+    const t = step("mesh result", () => k.tessellate(out, 0.05, 0.3));
+    const P = new Float32Array(t.indices.length * 3);
+    for (let i = 0; i < t.indices.length; i++) {
+      const j = t.indices[i] * 3;
+      const r = A.from(t.positions[j], t.positions[j + 2] + info.lo, -t.positions[j + 1]);
+      P[3 * i] = r[0];
+      P[3 * i + 1] = r[1];
+      P[3 * i + 2] = r[2];
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(P, 3));
+    g.computeVertexNormals();
+    const eg = new THREE.EdgesGeometry(g, 30);
+    const b = {
+      geo: m.geometry,
+      pos: m.position.clone(),
+      scl: m.scale.clone(),
+      quat: m.quaternion.clone(),
+      imp: m.userData.imported,
+      h: m.userData.height,
+      og: m.userData.occtG,
+      eg: m.userData.edges ? m.userData.edges.geometry : null
+    };
+    const apply = () => {
+      m.geometry = g;
+      m.position.set(0, 0, 0);
+      m.scale.set(1, 1, 1);
+      m.quaternion.set(0, 0, 0, 1);
+      m.userData.imported = true;
+      m.userData.height = 0;
+      m.userData.loopPts = null;
+      m.userData.occt = null;
+      m.userData.occtG = { geo: g, s: out, ax: info.ax, lo: info.lo, H: info.H };
+      m.material.side = THREE.DoubleSide;
+      if (m.userData.edges) m.userData.edges.geometry = eg;
+      m.updateMatrixWorld(true);
+    };
+    const revert = () => {
+      m.geometry = b.geo;
+      m.position.copy(b.pos);
+      m.scale.copy(b.scl);
+      m.quaternion.copy(b.quat);
+      m.userData.imported = b.imp;
+      m.userData.height = b.h;
+      m.userData.occtG = b.og;
+      if (m.userData.edges && b.eg) m.userData.edges.geometry = b.eg;
+      m.updateMatrixWorld(true);
+    };
+    apply();
+    undoStack.push({ redo: apply, undo: revert });
+    redoStack.length = 0;
+    cadToast("OCCT " + kind + " applied to " + edges.length + " edge(s)", true);
+    return true;
+  }
+
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {
     const own =
@@ -303,6 +468,9 @@
 
   // ---------- Per-edge fillet / chamfer (used by select-tools.js) ----------
   window.cadBevelEdges = function (k, m, chs, kind, size) {
+    if (m.userData.imported && !m.userData.loopPts && !(m.userData.occt && m.position.x === 0 && m.position.z === 0)) {
+      if (bevelPrism(k, m, chs, kind, size)) return;
+    }
     const { s, H } = solidOf(k, m);
     const all = step("list edges", () => k.getSubShapes(s, "edge")).map((e) => {
       const b = step("edge bounds", () => bbox(k, e));

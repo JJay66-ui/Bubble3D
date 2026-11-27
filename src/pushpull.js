@@ -720,6 +720,24 @@
   };
 
   // ---------- Real 3D cut: any solid minus any other solid ----------
+  // Plain boxes (even with extra edges on their faces) are rebuilt straight from their bounds
+  function boxBounds(m) {
+    try {
+      const T = window.cadTopo(m);
+      let vol = 0;
+      T.tris.forEach((t) => (vol += t.v[0].dot(new THREE.Vector3().crossVectors(t.v[1], t.v[2])) / 6));
+      const b = new THREE.Box3().setFromObject(m),
+        s = b.getSize(new THREE.Vector3()),
+        bv = s.x * s.y * s.z;
+      if (bv > 1e-9 && Math.abs(Math.abs(vol) - bv) < 0.01 * bv) return b;
+    } catch (e) {}
+    return null;
+  }
+  function boxFrom(k, b) {
+    const s = b.getSize(new THREE.Vector3());
+    // kernel is Z-up: kernel (x, y, z) = app (x, -z, y)
+    return k.translate(k.makeBox(s.x, s.z, s.y), b.min.x, -b.max.z, b.min.y);
+  }
   function absSolid(k, m) {
     const og = m.userData.occtG;
     if (
@@ -733,6 +751,8 @@
       if (Math.abs(pr.lo) > 1e-9) s = k.translate(s, 0, 0, pr.lo);
       return s;
     }
+    const bb = boxBounds(m);
+    if (bb) return boxFrom(k, bb);
     return meshSolid(k, m, AXES.y).s; // already in the app's absolute height
   }
   window.cadBoolCut = function (tool, solid) {
@@ -881,7 +901,19 @@
           added.push(meshOf(k, out2, h.material.color.getHex(), ca.ax));
           return;
         }
-        const tool = getTool();
+        let tool;
+        if (opts && opts.through && opts.ax) {
+          const bb = boxBounds(B);
+          if (bb) {
+            // a box pushed in: make it run straight through the whole other object
+            const hb = new THREE.Box3().setFromObject(h),
+              ext = bb.clone();
+            ext.min[opts.ax] = Math.min(bb.min[opts.ax], hb.min[opts.ax]) - 0.05;
+            ext.max[opts.ax] = Math.max(bb.max[opts.ax], hb.max[opts.ax]) + 0.05;
+            tool = step("through cutter", () => boxFrom(k, ext));
+          }
+        }
+        if (!tool) tool = getTool();
         const a = absSolid(k, h);
         const out = step("cut", () => k.cut(a, tool));
         if (k.getVolume && Math.abs(Math.abs(k.getVolume(a)) - Math.abs(k.getVolume(out))) < 1e-5) return;

@@ -106,13 +106,13 @@
   // ---------- Panel ----------
   const box = document.createElement("div");
   box.style.cssText =
-    "position:fixed;left:14px;top:80px;z-index:9;width:212px;border-radius:16px;background:rgba(28,31,38,.86);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#fff;font:12px -apple-system,sans-serif;user-select:none;display:none";
+    "position:fixed;left:84px;top:90px;z-index:7;width:176px;box-sizing:border-box;border-radius:16px;background:rgba(28,31,38,.94);border:1px solid #3a4150;color:#fff;font:13px -apple-system,sans-serif;user-select:none;display:none";
   const head = document.createElement("div");
   head.textContent = "☰ Screws";
   head.style.cssText = "padding:6px 10px;color:#9aa4b5;cursor:grab;touch-action:none";
   box.appendChild(head);
   const body = document.createElement("div");
-  body.style.cssText = "padding:0 10px 10px";
+  body.style.cssText = "padding:0 8px 8px";
   box.appendChild(body);
   document.body.appendChild(box);
   if (typeof makeDraggable === "function") makeDraggable(box, head);
@@ -187,7 +187,7 @@
   xb.addEventListener("pointerdown", kill, true);
   xb.addEventListener("click", kill, true);
   xb.style.zIndex = "60";
-  box.style.zIndex = "50";
+  
   box.appendChild(xb);
 
   const row = (label, el) => {
@@ -195,7 +195,7 @@
     r.style.cssText = "display:flex;align-items:center;gap:6px;margin:6px 0";
     const l = document.createElement("span");
     l.textContent = label;
-    l.style.cssText = "width:70px;color:#9aa4b5";
+    l.style.cssText = "width:54px;font-size:11px;color:#9aa4b5";
     r.append(l, el);
     body.appendChild(r);
     return r;

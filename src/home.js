@@ -572,7 +572,13 @@
           const ok = await confirmBox('Are you sure you want to delete "' + p.name + '"? This can\'t be undone.');
           if (!ok) return;
           await dbDel(p.id);
-          if (cur && cur.id === p.id) cur = null;
+          if (cur && cur.id === p.id) {
+            cur = null;
+            clearScene();
+            try {
+              localStorage.removeItem("bubble3d.rescue");
+            } catch (e) {}
+          }
           renderList();
         })
       );
@@ -616,13 +622,81 @@
     }
   });
 
-  // quiet autosave into the current project, and when the page is hidden
+  // ------------------------------------------------------------ never lose work
+  // 1) save a moment after every change, 2) save when leaving / hiding / refreshing / crashing,
+  // 3) keep a second copy in localStorage that survives even if the page dies mid-save.
+  const RESCUE = "bubble3d.rescue";
+  function ensureCur() {
+    if (!cur && hasWork()) cur = { id: newId(), name: "Untitled " + new Date().toLocaleString(), created: Date.now() };
+  }
+  function rescueSave() {
+    if (home.style.display !== "none" && !hasWork()) return;
+    try {
+      ensureCur();
+      if (!cur) return;
+      localStorage.setItem(RESCUE, JSON.stringify({ id: cur.id, name: cur.name, created: cur.created, t: Date.now(), data: serialize() }));
+    } catch (e) {
+      /* too big for localStorage: the IndexedDB save below still runs */
+    }
+  }
+  let lastSig = "",
+    timer = null;
+  const sig = () => shapes.length + "|" + lines.length + "|" + undoStack.length + "|" + redoStack.length + "|" + (undoStack[undoStack.length - 1] ? 1 : 0);
+  function flush() {
+    rescueSave();
+    ensureCur();
+    if (cur) save(true);
+  }
   setInterval(() => {
-    if (cur && home.style.display === "none") save(true);
+    if (home.style.display !== "none") return;
+    const g = sig();
+    if (g !== lastSig) {
+      lastSig = g;
+      clearTimeout(timer);
+      timer = setTimeout(flush, 1200);
+    }
+  }, 800);
+  setInterval(() => {
+    if (home.style.display === "none") flush();
   }, 20000);
+  addEventListener("pagehide", flush);
+  addEventListener("beforeunload", flush);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && cur) save(true);
+    if (document.hidden) flush();
   });
+  let errAt = 0;
+  const onCrash = () => {
+    if (Date.now() - errAt < 3000) return;
+    errAt = Date.now();
+    flush();
+  };
+  addEventListener("error", onCrash);
+  addEventListener("unhandledrejection", onCrash);
 
-  showHome();
+  // after a refresh or crash: bring back anything newer than the saved copy
+  async function recover() {
+    let r = null;
+    try {
+      r = JSON.parse(localStorage.getItem(RESCUE) || "null");
+    } catch (e) {}
+    if (!r || !r.data || !(r.data.objs || []).length) return;
+    try {
+      const old = await dbGet(r.id);
+      if (!old || (old.updated || 0) < r.t - 500) {
+        await dbPut({ id: r.id, name: r.name, created: r.created, updated: r.t, thumb: old ? old.thumb : "", data: r.data });
+        window.cadRecovered = r.name;
+      }
+      localStorage.removeItem(RESCUE);
+    } catch (e) {}
+  }
+
+  recover().then(() => {
+    showHome();
+    if (window.cadRecovered) {
+      const n = document.createElement("div");
+      n.textContent = "Recovered \u201c" + window.cadRecovered + "\u201d from your last session";
+      n.style.cssText = "display:inline-block;margin-top:18px;padding:8px 16px;border-radius:16px;background:rgba(61,220,132,.16);border:1px solid rgba(61,220,132,.5);color:#bff5d6;font-size:14px";
+      tag.after(n);
+    }
+  });
 })();

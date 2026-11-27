@@ -409,7 +409,8 @@
 
   const shaftM = new THREE.MeshBasicMaterial({ color: 0xcfd6e3, depthTest: false });
   const farrow = new THREE.Group();
-  const fshaft = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 2.4, 10), shaftM);
+  const fshaft = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.4, 10), shaftM);
+  fshaft.position.y = 0.7; // outside only
   const fout = new THREE.Mesh(
     new THREE.ConeGeometry(0.5, 0.9, 16),
     new THREE.MeshBasicMaterial({ color: 0x3ddc84, depthTest: false })
@@ -421,7 +422,7 @@
   );
   fin.position.y = -1.65;
   fin.rotation.x = Math.PI;
-  farrow.add(fshaft, fout, fin);
+  farrow.add(fshaft, fout); // no hidden inner arrow; drag the outer arrow backward to push in
   farrow.children.forEach((c) => (c.renderOrder = 21));
   farrow.visible = false;
   scene.add(farrow);
@@ -557,7 +558,7 @@
         }
       }
     } catch (e) {}
-    hint.textContent = "Drag the green arrow out to add, or the red side in to cut.";
+    hint.textContent = "Drag the arrow out to add, or drag it back toward the object to cut.";
   }
   addEventListener("cadselchange", refreshFaceArrow);
 

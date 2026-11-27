@@ -440,6 +440,11 @@
   garrow.children.forEach((c) => (c.renderOrder = 21));
   garrow.visible = false;
   scene.add(garrow);
+  // Matching arrow on the opposite side of the same object: grab it to push or pull that side
+  const oarrow = farrow.clone();
+  oarrow.children.forEach((c) => (c.material = c.material.clone()));
+  oarrow.visible = false;
+  scene.add(oarrow);
   let farD = 0;
 
   const r4 = (v) => Math.round(v * 1e4) / 1e4;
@@ -495,6 +500,7 @@
   function refreshFaceArrow() {
     farrow.visible = false;
     garrow.visible = false;
+    oarrow.visible = false;
     cur = null;
     clearPreview();
     const fs = window.cadSelFaces ? window.cadSelFaces() : [];
@@ -531,6 +537,23 @@
           garrow.position.copy(cur.c).addScaledVector(cur.n, farD + 0.9);
           garrow.quaternion.setFromUnitVectors(UPV, cur.n);
           garrow.visible = true;
+        }
+      }
+    } catch (e) {}
+    // matching arrow on the opposite side of this same object
+    try {
+      const inv = cur.n.clone().negate();
+      const o2 = cur.c.clone().addScaledVector(inv, 0.002);
+      const mine = new THREE.Raycaster(o2, inv, 0, 500).intersectObject(f.mesh, false);
+      if (mine.length) {
+        const dist = Math.max(...mine.map((h) => h.distance)) + 0.002;
+        if (dist > 0.05) {
+          oarrow.position.copy(cur.c).addScaledVector(inv, dist);
+          oarrow.quaternion.setFromUnitVectors(UPV, inv);
+          const oOnPlate = inv.y < -0.95 && new THREE.Box3().setFromObject(f.mesh).min.y < 0.02;
+          oarrow.children[1].material.color.set(oOnPlate ? 0xff6b6b : 0x3ddc84);
+          oarrow.visible = true;
+          cur.oppC = oarrow.position.clone();
         }
       }
     } catch (e) {}
@@ -726,7 +749,15 @@
       if (!cur || e.target !== el || (e.pointerType === "mouse" && e.button !== 0)) return;
       setRay(e);
       const onFar = garrow.visible && raycaster.intersectObjects(garrow.children, true)[0];
-      if (!onFar && !raycaster.intersectObjects(farrow.children, true)[0]) return;
+      const onOpp = oarrow.visible && raycaster.intersectObjects(oarrow.children, true)[0];
+      if (!onFar && !onOpp && !raycaster.intersectObjects(farrow.children, true)[0]) return;
+      if (onOpp && !onFar && !raycaster.intersectObjects(farrow.children, true)[0]) {
+        // switch to the opposite face, then it behaves exactly like the first arrow
+        const m = cur.f.mesh,
+          dir = cur.n.clone().negate();
+        if (window.cadSelectFaceToward) window.cadSelectFaceToward(m, dir);
+        if (!cur || cur.f.mesh !== m || cur.n.dot(dir) < 0.5) return;
+      }
       const a = scr(cur.c),
         b = scr(cur.c.clone().add(cur.n));
       fdrag = {

@@ -426,6 +426,22 @@
   farrow.visible = false;
   scene.add(farrow);
 
+  // Second arrow on the far side of whatever is in the way: grab it to push exactly through
+  const garrow = new THREE.Group();
+  const gshaft = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.4, 10), shaftM);
+  gshaft.position.y = 0.7;
+  const ghead = new THREE.Mesh(
+    new THREE.ConeGeometry(0.5, 0.9, 16),
+    new THREE.MeshBasicMaterial({ color: 0x3ddc84, depthTest: false })
+  );
+  ghead.position.y = 0.0;
+  ghead.rotation.x = Math.PI; // tip points down the group's -y, i.e. back toward the face
+  garrow.add(gshaft, ghead);
+  garrow.children.forEach((c) => (c.renderOrder = 21));
+  garrow.visible = false;
+  scene.add(garrow);
+  let farD = 0;
+
   const r4 = (v) => Math.round(v * 1e4) / 1e4;
   // The wall a vertical face stands on: two ends on the ground plan, plus its height range
   function faceSeg(f, T) {
@@ -478,6 +494,7 @@
   }
   function refreshFaceArrow() {
     farrow.visible = false;
+    garrow.visible = false;
     cur = null;
     clearPreview();
     const fs = window.cadSelFaces ? window.cadSelFaces() : [];
@@ -498,6 +515,25 @@
     farrow.position.copy(cur.c);
     farrow.quaternion.setFromUnitVectors(UPV, cur.n);
     farrow.visible = true;
+    // is another object in the way? then put a second arrow on its far side
+    garrow.visible = false;
+    farD = 0;
+    try {
+      const o = cur.c.clone().addScaledVector(cur.n, 0.002);
+      const rc = new THREE.Raycaster(o, cur.n.clone(), 0, 500);
+      const others = shapes.filter((s) => s !== f.mesh && s.visible !== false && !s.userData.isLine);
+      const hits = rc.intersectObjects(others, false);
+      if (hits.length) {
+        const first = hits[0].object;
+        const mine = hits.filter((h) => h.object === first);
+        farD = Math.max(...mine.map((h) => h.distance)) + 0.002;
+        if (farD > 0.05) {
+          garrow.position.copy(cur.c).addScaledVector(cur.n, farD + 0.9);
+          garrow.quaternion.setFromUnitVectors(UPV, cur.n);
+          garrow.visible = true;
+        }
+      }
+    } catch (e) {}
     hint.textContent = "Drag the green arrow out to add, or the red side in to cut.";
   }
   addEventListener("cadselchange", refreshFaceArrow);
@@ -689,10 +725,24 @@
     (e) => {
       if (!cur || e.target !== el || (e.pointerType === "mouse" && e.button !== 0)) return;
       setRay(e);
-      if (!raycaster.intersectObjects(farrow.children, true)[0]) return;
+      const onFar = garrow.visible && raycaster.intersectObjects(garrow.children, true)[0];
+      if (!onFar && !raycaster.intersectObjects(farrow.children, true)[0]) return;
       const a = scr(cur.c),
         b = scr(cur.c.clone().add(cur.n));
-      fdrag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: b.x - a.x, sy: b.y - a.y, d: 0 };
+      fdrag = {
+        id: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        sx: b.x - a.x,
+        sy: b.y - a.y,
+        d: onFar ? farD : 0,
+        base: onFar ? farD : 0,
+        moved: false
+      };
+      if (onFar) {
+        showPreview(farD);
+        showMeasure("Push through: " + fmt(farD));
+      }
       el.setPointerCapture(e.pointerId);
       e.stopImmediatePropagation();
     },
@@ -704,7 +754,8 @@
       if (!fdrag || e.pointerId !== fdrag.id) return;
       const len2 = fdrag.sx * fdrag.sx + fdrag.sy * fdrag.sy || 1;
       const d0 = ((e.clientX - fdrag.x) * fdrag.sx + (e.clientY - fdrag.y) * fdrag.sy) / len2;
-      fdrag.d = Math.round(d0 * 4) / 4;
+      if (Math.abs(d0) > 0.05) fdrag.moved = true;
+      fdrag.d = fdrag.base && !fdrag.moved ? fdrag.base : Math.round((fdrag.base + d0) * 4) / 4;
       showPreview(fdrag.d);
       showMeasure((fdrag.d >= 0 ? "Push out: " : "Push in: ") + fmt(Math.abs(fdrag.d)));
       e.stopImmediatePropagation();

@@ -56,15 +56,15 @@
     }
     parts.push(part(cyl(r, r * 0.15, tip), 0, -shank - tip / 2));
     // thread rings
-    const pitch = Math.max(p.d * 0.22, 0.02),
+    const pitch = Math.max(p.d * 0.3, 0.02),
       start = p.type === "flat" ? headH : 0.1 * p.d,
       end = shank + tip * 0.6;
     if (p.type !== "wood") {
-      for (let y = start + pitch; y < end; y += pitch) parts.push(part(cyl(r * 1.1, r * 1.1, pitch * 0.4, 20), 0, -y));
+      for (let y = start + pitch; y < end; y += pitch) parts.push(part(cyl(r * 1.2, r * 1.2, pitch * 0.5, 20), 0, -y));
     } else {
       for (let y = start + pitch; y < end; y += pitch) {
         const k = 1 - Math.max(0, (y - shank) / tip) * 0.8;
-        parts.push(part(cyl(r * 1.25 * k, r * 1.25 * k, pitch * 0.45, 20), 0, -y));
+        parts.push(part(cyl(r * 1.35 * k, r * 1.35 * k, pitch * 0.5, 20), 0, -y));
       }
     }
     // head
@@ -441,9 +441,14 @@
     const h = raycaster.intersectObjects(sh, false)[0];
     if (h) {
       if (h.object !== cur) pick(h.object);
-      drag = { kind: "move", p0: cur.position.clone(), grab: null };
-      const sp = surfacePoint(e, cur);
-      drag.grab = sp ? cur.position.clone().sub(sp.point) : new V3();
+      // drag in a plane facing the camera, so the screw can slide into holes and through surfaces
+      const camDir = new V3();
+      camera.getWorldDirection(camDir);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, cur.position);
+      const hp = new V3();
+      setRay(e);
+      drag = { kind: "move", p0: cur.position.clone(), plane, grab: new V3() };
+      if (raycaster.ray.intersectPlane(plane, hp)) drag.grab = cur.position.clone().sub(hp);
       return true;
     }
     return false;
@@ -498,10 +503,19 @@
           cur.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(drag.ring.userData.axis, d));
           setN(cur);
         } else {
-          const sp = surfacePoint(e, cur);
-          if (sp) {
-            cur.position.copy(sp.point.add(drag.grab));
+          setRay(e);
+          const hp = new V3();
+          if (raycaster.ray.intersectPlane(drag.plane, hp)) {
+            cur.position.copy(hp.add(drag.grab));
             if (cur.position.y < 0) cur.position.y = 0;
+            // drop it back in its own hole: snap to the spot it was set in
+            const home = cur.userData.screw.home;
+            if (home && cur.position.distanceTo(home.p) < 0.35) {
+              cur.position.copy(home.p);
+              cur.quaternion.copy(home.q);
+              setN(cur);
+              if (window.showMeasure) showMeasure("Back in its hole");
+            }
             cur.updateMatrixWorld(true);
           }
         }
@@ -633,6 +647,7 @@
       const c = await new Promise((res) => res(window.cadSideHole(hs, ax, m.position.clone(), rr, a0 - 0.001, a1 + 0.001, "Hole cut for the screw (gap " + fmt(P.fit) + ")")));
       if (c) {
         m.userData.screw.set = true;
+        m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
         say("Hole cut in " + c + " object" + (c > 1 ? "s" : "") + ".", true);
       } else say("Couldn't cut a side hole: " + (window.cadSideHoleWhy || "unknown reason"), false);
       return;
@@ -677,13 +692,13 @@
         r0 = p.d / 2,
         tip = Math.min(L / 4, p.d * 0.9),
         shank = L - tip,
-        pitch = Math.max(p.d * 0.22, 0.02),
+        pitch = Math.max(p.d * 0.3, 0.02),
         headH = p.type === "flat" ? p.d * 0.5 : 0,
         start = p.type === "flat" ? headH : 0.1 * p.d,
         end = shank + tip * 0.6;
       // bands from the bottom of the hole to the top: thin core radius, wider radius where a thread ring sits
-      const rc = r0 * 0.8 + gap,
-        rg = r0 * (p.type === "wood" ? 1.3 : 1.18) + gap,
+      const rc = r0 * 0.78 + gap,
+        rg = r0 * (p.type === "wood" ? 1.35 : 1.2) + gap,
         hh = pitch * 0.5,
         yz = (y) => (n.y > 0 ? top - y : top + y);
       const gro = [];
@@ -706,6 +721,7 @@
     } else ok = await window.cadCutHoles(hosts, ring, y0 - 0.001, y1 + 0.001, null, "Hole cut for the screw (gap " + fmt(P.fit) + ")");
     if (ok) {
       m.userData.screw.set = true;
+      m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
       say("Hole cut in " + hosts.length + " object" + (hosts.length > 1 ? "s" : "") + ". The screw can be removed or turned in from either side.", true);
     } else say("Couldn't cut a hole in that object (STL imports and filleted shapes aren't supported yet).", false);
   }

@@ -55,7 +55,8 @@
     right: () => ground(new V3().setFromMatrixColumn(camera.matrixWorld, 0)),
     depth: () => ground(new V3().setFromMatrixColumn(camera.matrixWorld, 2).negate())
   };
-  const SPEED = 0.02; // scene units per pixel
+  const SPEED = 0.01; // scene units per pixel (100 px = 10 mm)
+  const STEP = 0.05; // moves in 0.5 mm steps
   function pad(label, w, h, axis, vertical) {
     const p = document.createElement("div");
     p.style.cssText =
@@ -75,7 +76,7 @@
     p.addEventListener("pointermove", (e) => {
       if (!g || !listSel) return;
       const px = vertical ? -(e.clientY - g.y) : e.clientX - g.x;
-      g.moved = px * SPEED;
+      g.moved = Math.round((px * SPEED) / STEP) * STEP;
       const np = g.p0.clone().addScaledVector(g.d, g.moved);
       listSel.position.copy(np);
       lift(listSel);
@@ -130,12 +131,12 @@
       return;
     }
     listSel = o;
-    xray(o, true);
+    if (!o.userData.screw) xray(o, true);
   };
   // when something else becomes selected, or it goes away, put it back
   (function loop() {
     if (listSel) {
-      const gone = !listSel.parent || listSel.visible === false || selected !== listSel;
+      const gone = !listSel.parent || listSel.visible === false || (!listSel.userData.screw && selected !== listSel);
       if (gone) {
         xray(listSel, false);
         listSel = null;

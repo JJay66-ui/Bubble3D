@@ -117,23 +117,68 @@
   document.body.appendChild(box);
   if (typeof makeDraggable === "function") makeDraggable(box, head);
 
+  // ---- Toolbar category "Screws" under Shape, with a flyout of screw types ----
+  const ico = {
+    pan: '<path d="M6 8a6 4 0 0 1 12 0z"/><path d="M10 8v12l2 2 2-2V8"/><path d="M10 12h4M10 16h4"/>',
+    socket: '<path d="M6 3h12v5H6z"/><path d="M10 5.5h4"/><path d="M10 8v12l2 2 2-2V8"/><path d="M10 12h4M10 16h4"/>',
+    flat: '<path d="M4 4h16L14 9v11l-2 2-2-2V9z"/><path d="M10 13h4M10 17h4"/>',
+    hex: '<path d="M8 3h8l3 3v3H5V6z"/><path d="M10 9v11l2 2 2-2V9"/><path d="M10 13h4M10 17h4"/>',
+    set: '<path d="M9 3v17l3 2 3-2V3z"/><path d="M9 8h6M9 12h6M9 16h6"/>',
+    wood: '<path d="M6 8a6 4 0 0 1 12 0z"/><path d="M9 8l3 14 3-14"/><path d="M9.5 12l5 1M10 16l4 1"/>'
+  };
+  const svg = (k) => '<svg viewBox="0 0 24 24">' + ico[k] + "</svg>";
+  const grp = document.createElement("div");
+  grp.className = "grp";
   const open = document.createElement("button");
   open.className = "bubble";
-  open.innerHTML =
-    '<svg viewBox="0 0 24 24"><path d="M6 3h12v4H6z"/><path d="M10 7v13l2 2 2-2V7"/><path d="M10 11h4M10 15h4"/></svg><span>Screws</span>';
-  const fly = typeof buttons !== "undefined" && buttons.cut ? buttons.cut.parentNode : null;
-  if (fly) fly.appendChild(open);
-  else {
-    open.style.cssText = "position:fixed;left:14px;top:46px;z-index:9";
-    document.body.appendChild(open);
-  }
-  open.onclick = (ev) => {
+  open.innerHTML = svg("socket") + "<span>Screws</span>";
+  const fly = document.createElement("div");
+  fly.className = "flyout";
+  document.body.appendChild(fly);
+  if (typeof flyouts !== "undefined") flyouts.push(fly);
+  grp.appendChild(open);
+  if (typeof bar !== "undefined") bar.appendChild(grp);
+  else document.body.appendChild(grp);
+  const typeBtns = {};
+  Object.keys(TYPES).forEach((k) => {
+    const b = document.createElement("button");
+    b.className = "bubble";
+    b.innerHTML = svg(k) + "<span>" + TYPES[k].split(" (")[0].replace(" head", "").replace("Set screw", "Set") + "</span>";
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      P.type = k;
+      typeSel.value = k;
+      open.innerHTML = svg(k) + "<span>Screws</span>";
+      open.classList.add("active");
+      fly.classList.remove("open");
+      box.style.display = "block";
+      apply();
+      startPlacing();
+    });
+    typeBtns[k] = b;
+    fly.appendChild(b);
+  });
+  open.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    const was = fly.classList.contains("open");
     if (typeof closeFlyouts === "function") closeFlyouts();
-    box.style.display = box.style.display === "none" ? "block" : "none";
-    open.classList.toggle("active", box.style.display !== "none");
-    if (box.style.display === "none") stopPlacing();
+    if (!was) {
+      const r = open.getBoundingClientRect();
+      fly.style.left = r.right + 10 + "px";
+      fly.style.top = Math.max(8, r.top - 4) + "px";
+      fly.classList.add("open");
+    }
+  });
+  const closePanel = () => {
+    box.style.display = "none";
+    open.classList.remove("active");
+    stopPlacing();
   };
+  const xb = document.createElement("span");
+  xb.textContent = "\u2715";
+  xb.style.cssText = "float:right;cursor:pointer;padding:0 4px";
+  xb.onclick = closePanel;
+  head.appendChild(xb);
 
   const row = (label, el) => {
     const r = document.createElement("div");

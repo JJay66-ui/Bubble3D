@@ -41,6 +41,8 @@
   const panel = document.createElement("div");
   panel.style.cssText =
     "position:absolute;right:254px;bottom:14px;width:230px;background:rgba(28,31,38,.95);border:1px solid #3a4150;border-radius:16px;padding:10px;color:#fff;font:13px -apple-system,sans-serif;z-index:8;display:none";
+  panel.dataset.dragkey = "bevelpanel";
+  panel.dataset.dragbody = "1";
   document.body.appendChild(panel);
 
   const scr = (v) => {

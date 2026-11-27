@@ -507,7 +507,18 @@
         /* a bad sliver triangle: leave it out */
       }
     });
-    const sew = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-5) : k.buildSolidFromFaces(F);
+    let sew = null,
+      sewErr = null;
+    for (const tol of [1e-5, 1e-4, 1e-3, 1e-2]) {
+      try {
+        sew = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, tol) : k.buildSolidFromFaces(F);
+        if (sew && (!k.getVolume || Math.abs(k.getVolume(sew)) > 1e-6)) break;
+        sew = null;
+      } catch (e) {
+        sewErr = e;
+      }
+    }
+    if (!sew && sewErr) throw sewErr;
     if (!sew) throw new Error("couldn't rebuild the solid from the mesh");
     if (k.getVolume && Math.abs(k.getVolume(sew)) < 1e-6) throw new Error("rebuilt solid is empty");
     return { s: sew, H: hi - lo };
@@ -687,6 +698,12 @@
 
   // ---------- Real 3D cut: any solid minus any other solid ----------
   function absSolid(k, m) {
+    const og = m.userData.occtG;
+    if (
+      og && og.s && m.position.lengthSq() < 1e-10 && Math.abs(m.scale.x - 1) < 1e-9 && Math.abs(m.scale.y - 1) < 1e-9 &&
+      Math.abs(m.scale.z - 1) < 1e-9 && Math.abs(m.rotation.x) + Math.abs(m.rotation.y) + Math.abs(m.rotation.z) < 1e-9
+    )
+      return og.s; // an earlier cut result: reuse its exact solid
     const pr = prismAnyAxis(m, "y");
     if (pr) {
       let s = prismFromPoints(k, pr.pts, pr.H);

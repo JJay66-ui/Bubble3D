@@ -971,8 +971,130 @@
     clearPreview();
     hideMeasure();
     e.stopImmediatePropagation();
-    if (commit && f) commitFace(f, d);
+    if (commit && f) {
+      if (d < -0.05) askPulled(f, d);
+      else commitFace(f, d);
+    }
   };
+
+  // After pushing a face in: keep the removed piece as its own object, or delete it
+  const pp = document.createElement("div");
+  pp.style.cssText =
+    "position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:31;display:none;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:92vw;padding:10px 12px;border-radius:16px;background:rgba(28,31,38,.95);border:1px solid rgba(255,255,255,.18);color:#fff;font:13px -apple-system,sans-serif";
+  const mkPB = (t, bg) => {
+    const b = document.createElement("button");
+    b.textContent = t;
+    b.style.cssText = "padding:7px 14px;border:none;border-radius:12px;color:#fff;font-size:13px;background:" + bg;
+    return b;
+  };
+  const ppT = document.createElement("span");
+  ppT.textContent = "Pushed in. What about the piece you removed?";
+  const ppKeep = mkPB("Keep object", "#1f9d63"),
+    ppDel = mkPB("Delete object", "#d64545"),
+    ppX = mkPB("\u2715", "rgba(255,255,255,.14)");
+  pp.append(ppT, ppKeep, ppDel, ppX);
+  document.body.appendChild(pp);
+  let ppPending = null;
+  function pulledSlab(f, d) {
+    // outline and height range of the piece that the push-in removes
+    const A = f.mesh,
+      T = window.cadTopo(A);
+    if (Math.abs(f.n.y) < 0.05) {
+      const s = faceSeg(f, T);
+      return { ring: quadRing(s, d), y0: s.y0, y1: s.y1 };
+    }
+    const kk = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.z * 1e3),
+      cnt = new Map();
+    let fy = 0;
+    f.tris.forEach((j) => {
+      const t = T.tris[j];
+      fy = t.v[0].y;
+      for (let e = 0; e < 3; e++) {
+        const a = t.v[e],
+          b = t.v[(e + 1) % 3],
+          ka = kk(a),
+          kb = kk(b),
+          key = ka < kb ? ka + "|" + kb : kb + "|" + ka,
+          r = cnt.get(key);
+        if (r) r.n++;
+        else cnt.set(key, { n: 1, a, b, ka, kb });
+      }
+    });
+    const nxt = new Map();
+    let first = null;
+    cnt.forEach((r) => {
+      if (r.n !== 1) return;
+      first = first || r;
+      [r.ka, r.kb].forEach((q) => (nxt.has(q) ? nxt.get(q).push(r) : nxt.set(q, [r])));
+    });
+    if (!first) throw new Error("no outline");
+    const ring = [[first.a.x, first.a.z]];
+    let cu = first.kb,
+      pr = first,
+      g = 0;
+    while (cu !== first.ka && g++ < cnt.size + 2) {
+      const r = (nxt.get(cu) || []).find((q) => q !== pr);
+      if (!r) break;
+      const v2 = r.ka === cu ? r.a : r.b;
+      ring.push([v2.x, v2.z]);
+      cu = r.ka === cu ? r.kb : r.ka;
+      pr = r;
+    }
+    const up = f.n.y > 0;
+    return { ring, y0: up ? fy + d : fy, y1: up ? fy : fy - d };
+  }
+  function slabMesh(S, color) {
+    const sh = new THREE.Shape();
+    S.ring.forEach((q, i) => (i ? sh.lineTo(q[0], -q[1]) : sh.moveTo(q[0], -q[1])));
+    sh.closePath();
+    const g = new THREE.ExtrudeGeometry(sh, { depth: Math.max(S.y1 - S.y0, 0.01), bevelEnabled: false, curveSegments: 24 });
+    g.rotateX(-Math.PI / 2);
+    g.translate(0, S.y0, 0);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, metalness: 0.1, roughness: 0.6, side: THREE.DoubleSide }));
+    m.userData.imported = true;
+    m.userData.height = 0;
+    const eg = new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), new THREE.LineBasicMaterial({ color: 0xffffff }));
+    m.add(eg);
+    m.userData.edges = eg;
+    return m;
+  }
+  const ppClose = () => {
+    pp.style.display = "none";
+    ppPending = null;
+  };
+  async function ppGo(keep) {
+    const P = ppPending;
+    ppClose();
+    if (!P) return;
+    let slab = null;
+    if (keep) {
+      try {
+        slab = slabMesh(pulledSlab(P.f, P.d), P.f.mesh.material.color.getHex());
+      } catch (e) {
+        toast("Couldn't keep the piece (" + (e.message || e) + ")", false);
+      }
+    }
+    await commitFace(P.f, P.d);
+    if (slab) {
+      perform({
+        redo() {
+          addToScene(slab);
+        },
+        undo() {
+          removeFromScene(slab);
+        }
+      });
+      toast("Pushed in. The removed piece is kept as its own object.", true);
+    }
+  }
+  function askPulled(f, d) {
+    ppPending = { f, d };
+    pp.style.display = "flex";
+  }
+  ppKeep.onclick = () => ppGo(true);
+  ppDel.onclick = () => ppGo(false);
+  ppX.onclick = ppClose;
   addEventListener("pointerup", endFace(true), true);
   addEventListener("pointercancel", endFace(false), true);
 

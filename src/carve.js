@@ -305,7 +305,9 @@
       (o) =>
         o !== B &&
         o.visible !== false &&
-        o.userData.height > 0.05 &&
+        !o.userData.isLine &&
+        !o.userData.screw &&
+        (o.userData.height > 0.05 || o.userData.imported || o.userData.occtG) &&
         new THREE.Box3().setFromObject(o).intersectsBox(bb)
     );
   };
@@ -356,7 +358,7 @@
 
   window.cadCarve = function (B) {
     if (!B || B.visible === false || B.userData.isLine) return;
-    if (!(B.userData.height > 0.05)) return hidePop();
+    if (!(B.userData.height > 0.05 || B.userData.imported || B.userData.occtG)) return hidePop();
     const near = nearOf(B);
     if (!near.length) return hidePop();
     popB = B;

@@ -485,6 +485,8 @@
       tmp2 = new THREE.Vector3();
     let hi = -Infinity,
       lo = Infinity;
+    const seenTri = new Set(),
+      edgeCt = new Map();
     T.tris.forEach((t) => {
       if (t.face === -2) return;
       let [a, b, c] = t.v.map((p) => {
@@ -498,9 +500,20 @@
       if (cr.length() < 1e-8 || tmp1.length() < 1e-5 || tmp2.length() < 1e-5) return; // skip zero-size triangles
       if (cr.dot(new THREE.Vector3(nn.x, nn.y, nn.z)) < 0) [b, c] = [c, b];
       [a, b, c].forEach((p) => ((hi = Math.max(hi, p.y)), (lo = Math.min(lo, p.y))));
-      const pa = [a.x, -a.z, a.y],
-        pb = [b.x, -b.z, b.y],
-        pc2 = [c.x, -c.z, c.y];
+      const sn = (p) => [Math.round(p.x * 1e4) / 1e4, Math.round(-p.z * 1e4) / 1e4, Math.round(p.y * 1e4) / 1e4];
+      const pa = sn(a),
+        pb = sn(b),
+        pc2 = sn({ x: c.x, y: c.y, z: c.z });
+      const key = (p) => p.join(",");
+      const ka = key(pa), kb = key(pb), kc = key(pc2);
+      if (ka === kb || kb === kc || ka === kc) return; // collapsed after snapping
+      const tk = [ka, kb, kc].sort().join("|");
+      if (seenTri.has(tk)) return; // duplicate triangle
+      seenTri.add(tk);
+      [[ka, kb], [kb, kc], [kc, ka]].forEach(([p, q]) => {
+        const ek = p + ">" + q;
+        edgeCt.set(ek, (edgeCt.get(ek) || 0) + 1);
+      });
       try {
         F.push(k.buildTriFace(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], pc2[0], pc2[1], pc2[2]));
       } catch (e) {
@@ -518,7 +531,16 @@
         sewErr = e;
       }
     }
-    if (!sew && sewErr) throw sewErr;
+    if (!sew) {
+      let open = 0;
+      edgeCt.forEach((n, ek) => {
+        const [p, q] = ek.split(">");
+        if (!edgeCt.has(q + ">" + p)) open++;
+      });
+      throw new Error(
+        (sewErr ? sewErr.message : "sewing failed") + " [" + F.length + " triangles, " + open + " open edges" + (open ? ": the object has gaps or T-junctions" : "") + "]"
+      );
+    }
     if (!sew) throw new Error("couldn't rebuild the solid from the mesh");
     if (k.getVolume && Math.abs(k.getVolume(sew)) < 1e-6) throw new Error("rebuilt solid is empty");
     return { s: sew, H: hi - lo };

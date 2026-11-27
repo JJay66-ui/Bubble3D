@@ -1006,24 +1006,7 @@
           });
           return toast("Pushed all the way through: the shape was deleted. Undo brings it back.", true);
         }
-        let hits = false;
-        try {
-          const S = pulledSlab(f, d),
-            sb = new THREE.Box3();
-          S.ring.forEach((q) => sb.expandByPoint(new THREE.Vector3(q[0], S.y0, q[1])));
-          sb.expandByPoint(new THREE.Vector3(sb.min.x, S.y1, sb.min.z));
-          sb.expandByScalar(-0.01);
-          hits = shapes.some(
-            (o) =>
-              o !== A &&
-              o.visible !== false &&
-              !(o.userData && o.userData.screw) &&
-              new THREE.Box3().setFromObject(o).intersectsBox(sb)
-          );
-        } catch (e) {
-          hits = false;
-        }
-        if (hits) askPulled(f, d);
+        if (nearOf(A).length) askPulled(f, d);
         else commitFace(f, d);
       } else commitFace(f, d);
     }
@@ -1040,7 +1023,7 @@
     return b;
   };
   const ppT = document.createElement("span");
-  ppT.textContent = "Pushed in. What about the piece you removed?";
+  ppT.textContent = "This object intersects another one.";
   const ppKeep = mkPB("Keep object", "#1f9d63"),
     ppDel = mkPB("Delete object", "#d64545"),
     ppX = mkPB("\u2715", "rgba(255,255,255,.14)");
@@ -1119,26 +1102,23 @@
     const P = ppPending;
     ppClose();
     if (!P) return;
-    let slab = null;
-    if (keep) {
-      try {
-        slab = slabMesh(pulledSlab(P.f, P.d), P.f.mesh.material.color.getHex());
-      } catch (e) {
-        toast("Couldn't keep the piece (" + (e.message || e) + ")", false);
+    const A = P.f.mesh;
+    if (keep) return commitFace(P.f, P.d); // keep the object: the drag is applied as normal
+    // delete the object, and cut its shape out of whatever it intersects
+    if (nearOf(A).length && (await doCarve(A))) return;
+    try {
+      if (nearOf(A).length && window.cadBoolMany && window.cadBoolMany(A, nearOf(A), "cut")) return;
+    } catch (e) {}
+    perform({
+      redo() {
+        removeFromScene(A);
+        hideArrow();
+      },
+      undo() {
+        addToScene(A);
       }
-    }
-    await commitFace(P.f, P.d);
-    if (slab) {
-      perform({
-        redo() {
-          addToScene(slab);
-        },
-        undo() {
-          removeFromScene(slab);
-        }
-      });
-      toast("Pushed in. The removed piece is kept as its own object.", true);
-    }
+    });
+    toast("Object deleted. Undo brings it back.", true);
   }
   function askPulled(f, d) {
     ppPending = { f, d };

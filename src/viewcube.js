@@ -363,6 +363,7 @@
       prev.geometry.dispose();
       prev = null;
     }
+    window.cadPrevObj = null;
   }
   function cancelSketch() {
     sk = null;
@@ -390,6 +391,7 @@
     else if (sk.tool === "circle") prev = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(circlePts(a, p)), mat);
     else prev = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(corners(a, p)), mat);
     prev.renderOrder = 6;
+    window.cadPrevObj = prev;
     scene.add(prev);
   }
 

@@ -161,8 +161,13 @@
     if (!fly.classList.contains("open")) return;
     const r = open.getBoundingClientRect();
     const h = fly.offsetHeight;
-    let top = r.top - 4;
-    top = Math.max(8, Math.min(top, innerHeight - 8 - h));
+    // line the first screw up beside Select (top of the bar) so it sits clear of the bottom text
+    const sb = typeof buttons !== "undefined" && buttons.select ? buttons.select.getBoundingClientRect() : r;
+    let top = sb.top - 4;
+    let limit = innerHeight - 8;
+    const tgl = Array.from(document.querySelectorAll("button")).find((b) => b.textContent.indexOf("Cut object:") === 0);
+    if (tgl && tgl.offsetParent !== null) limit = Math.min(limit, tgl.getBoundingClientRect().top - 8);
+    top = Math.max(8, Math.min(top, limit - h));
     fly.style.left = r.right + 10 + "px";
     fly.style.top = top + "px";
   }

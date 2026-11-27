@@ -496,10 +496,10 @@
       tmp2.subVectors(c, a);
       if (tmp1.cross(tmp2).dot(new THREE.Vector3(nn.x, nn.y, nn.z)) < 0) [b, c] = [c, b];
       [a, b, c].forEach((p) => ((hi = Math.max(hi, p.y)), (lo = Math.min(lo, p.y))));
-      const A = [a.x, -a.z, a.y],
-        B = [b.x, -b.z, b.y],
-        C = [c.x, -c.z, c.y];
-      F.push(k.buildTriFace(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2]));
+      const pa = [a.x, -a.z, a.y],
+        pb = [b.x, -b.z, b.y],
+        pc2 = [c.x, -c.z, c.y];
+      F.push(k.buildTriFace(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], pc2[0], pc2[1], pc2[2]));
     });
     const sew = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-5) : k.buildSolidFromFaces(F);
     if (!sew) throw new Error("couldn't rebuild the solid from the mesh");

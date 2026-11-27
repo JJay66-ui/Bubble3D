@@ -978,8 +978,44 @@
     hideMeasure();
     e.stopImmediatePropagation();
     if (commit && f) {
-      if (d < -0.05) askPulled(f, d);
-      else commitFace(f, d);
+      if (d < -0.05) {
+        const A = f.mesh,
+          bb = new THREE.Box3().setFromObject(A),
+          sz = bb.getSize(new THREE.Vector3()),
+          thick = Math.abs(f.n.x) * sz.x + Math.abs(f.n.y) * sz.y + Math.abs(f.n.z) * sz.z;
+        if (thick >= 0.1 && -d >= thick - 0.02) {
+          // pushed all the way through: the whole shape goes
+          perform({
+            redo() {
+              removeFromScene(A);
+              hideArrow();
+            },
+            undo() {
+              addToScene(A);
+            }
+          });
+          return toast("Pushed all the way through: the shape was deleted. Undo brings it back.", true);
+        }
+        let hits = false;
+        try {
+          const S = pulledSlab(f, d),
+            sb = new THREE.Box3();
+          S.ring.forEach((q) => sb.expandByPoint(new THREE.Vector3(q[0], S.y0, q[1])));
+          sb.expandByPoint(new THREE.Vector3(sb.min.x, S.y1, sb.min.z));
+          sb.expandByScalar(-0.01);
+          hits = shapes.some(
+            (o) =>
+              o !== A &&
+              o.visible !== false &&
+              !(o.userData && o.userData.screw) &&
+              new THREE.Box3().setFromObject(o).intersectsBox(sb)
+          );
+        } catch (e) {
+          hits = false;
+        }
+        if (hits) askPulled(f, d);
+        else commitFace(f, d);
+      } else commitFace(f, d);
     }
   };
 

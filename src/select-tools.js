@@ -232,12 +232,19 @@
   function pickFace(e) {
     setRay(e);
     const hits = raycaster.intersectObjects(vis(), false);
-    const list = [];
+    const cand = [];
     hits.forEach((h) => {
       const T = topo(h.object);
       const f = T.faces[T.tris[h.faceIndex].face];
-      if (f && list.indexOf(f) < 0) list.push(f);
+      if (f && !cand.some((c) => c.f === f)) {
+        let area = 0;
+        f.tris.forEach((j) => (area += T.tris[j].area || 0));
+        cand.push({ f, d: h.distance, area });
+      }
     });
+    // faces lying on top of each other (a drawn shape on a face): the smaller one is picked first
+    cand.sort((a, b) => (Math.abs(a.d - b.d) < 0.01 ? a.area - b.area : a.d - b.d));
+    const list = cand.map((c) => c.f);
     if (!list.length) return null;
     let i = 0;
     if (lastPick && Math.hypot(e.clientX - lastPick.x, e.clientY - lastPick.y) < 8) {

@@ -277,7 +277,12 @@
   r2.style.cssText = "display:flex;gap:6px;margin:6px 0";
   const r3 = document.createElement("div");
   r3.style.cssText = "display:flex;gap:6px;margin:6px 0";
-  r3.append(btn("Upright", () => upright(), "#3a4150"));
+  const ringBtn = btn("Rings: On", () => {
+    ringsOn = !ringsOn;
+    ringBtn.textContent = "Rings: " + (ringsOn ? "On" : "Off");
+    ringBtn.style.background = ringsOn ? "#2f8cff" : "#3a4150";
+  }, "#2f8cff");
+  r3.append(btn("Upright", () => upright(), "#3a4150"), ringBtn);
   r2.append(btn("Set (cut hole)", setScrew, "#1f9d63"), btn("Delete", del, "#8a2f2f"));
   body.append(r1, r3, r2, note);
 
@@ -349,7 +354,8 @@
     );
   }
 
-  let drag = null;
+  let drag = null,
+    ringsOn = true;
   // ---- rotation rings: two half circles (180 degrees each) ----
   const ringMat = (c) => new THREE.MeshBasicMaterial({ color: c, depthTest: false, transparent: true, opacity: 0.9 });
   const mkRing = (c, flat) => {
@@ -371,7 +377,7 @@
   ringB.userData.v = new V3(0, 0, 1);
   scene.add(ringA, ringB);
   (function loop() {
-    const on = cur && cur.parent && box.style.display !== "none" && cur.visible !== false;
+    const on = ringsOn && cur && cur.parent && box.style.display !== "none" && cur.visible !== false;
     [ringA, ringB].forEach((r) => {
       r.visible = !!on;
       if (on) {

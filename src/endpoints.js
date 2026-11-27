@@ -18,7 +18,7 @@
   g.fillStyle = grad;
   g.fill();
   const tex = new THREE.CanvasTexture(cvs);
-  const DOT = 0.013; // just a little bigger than the line
+  const DOT_PX = 6.5; // dot width on screen: just a little bigger than the line
   const THICK_PX = 2.6; // line thickness on screen
 
   const dots = new Map(); // source -> [sprite, sprite]
@@ -27,7 +27,6 @@
   const unitGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
   const mkDot = () => {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false }));
-    s.scale.set(DOT, DOT, 1);
     s.renderOrder = 9;
     s.raycast = () => {};
     scene.add(s);
@@ -108,5 +107,8 @@
     if (window.cadPrevObj && window.cadPrevObj.isLine && window.cadPrevObj.parent) src.add(window.cadPrevObj);
     [...tubes.keys()].forEach((s) => !src.has(s) && drop(s));
     src.forEach((s) => update(s, s.visible === false));
+    // keep the dots the same small size on screen (a sprite's size is its scale times its distance)
+    const k = DOT_PX / (innerHeight * 2 * Math.tan((camera.fov * Math.PI) / 360)) / 0.875;
+    dots.forEach((d) => d.forEach((s) => s.scale.set(k, k, 1)));
   })();
 })();

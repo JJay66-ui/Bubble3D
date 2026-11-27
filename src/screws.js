@@ -758,7 +758,7 @@
       m.userData.screw.set = true;
       m.userData.screw.home = { p: m.position.clone(), q: m.quaternion.clone() };
       say("Plain hole only, no threads (" + (window.cadAxisWhy || "kernel route not used") + ").", true);
-    } else say("Couldn't cut a hole in that object (STL imports and filleted shapes aren't supported yet).", false);
+    } else say("Couldn't cut a hole. Kernel cut: " + (window.cadAxisWhy || "not tried") + ". Simple cut: this shape type isn't supported.", false);
   }
 
   // ---- Keep every flyout inside the page ----

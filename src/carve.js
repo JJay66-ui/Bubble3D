@@ -296,7 +296,7 @@
     tgLabel();
   };
   tgLabel();
-  document.body.appendChild(tg);
+  // (the always-visible toggle was removed: the pop-up now offers Merge or Cut)
 
   // ---------- Entry point: B was just extruded or resized ----------
   const nearOf = (B) => {
@@ -315,13 +315,16 @@
   pop.style.cssText =
     "position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:30;display:none;gap:8px;align-items:center;padding:8px 10px;border-radius:16px;background:rgba(28,31,38,.92);border:1px solid rgba(255,255,255,.18);color:#fff;font:13px -apple-system,sans-serif";
   const popTxt = document.createElement("span");
+  const popJoin = document.createElement("button");
+  popJoin.textContent = "Merge";
+  popJoin.style.cssText = "padding:6px 14px;border:none;border-radius:12px;background:#2f8cff;color:#fff;font-size:13px";
   const popCut = document.createElement("button");
-  popCut.textContent = "Cut object";
+  popCut.textContent = "Cut";
   popCut.style.cssText = "padding:6px 14px;border:none;border-radius:12px;background:#d64545;color:#fff;font-size:13px";
   const popX = document.createElement("button");
   popX.textContent = "\u2715";
   popX.style.cssText = "padding:6px 9px;border:none;border-radius:12px;background:rgba(255,255,255,.12);color:#fff;font-size:13px";
-  pop.append(popTxt, popCut, popX);
+  pop.append(popTxt, popJoin, popCut, popX);
   document.body.appendChild(pop);
   let popB = null;
   const hidePop = () => {
@@ -332,7 +335,24 @@
   popCut.onclick = () => {
     const B = popB;
     hidePop();
-    if (B && B.parent) doCarve(B);
+    if (!B || !B.parent) return;
+    try {
+      if (window.cadBoolMany && window.cadBoolMany(B, nearOf(B), "cut")) return;
+    } catch (e) {
+      toast("3D cut failed (" + (e.message || e) + "). Trying the simple cut.");
+    }
+    doCarve(B);
+  };
+  popJoin.onclick = () => {
+    const B = popB;
+    hidePop();
+    if (!B || !B.parent) return;
+    try {
+      if (!window.cadBoolMany) throw new Error("pushpull.js is out of date");
+      window.cadBoolMany(B, nearOf(B), "merge");
+    } catch (e) {
+      toast("Merge failed: " + (e.message || e), false);
+    }
   };
   addEventListener("pointerdown", (e) => {
     if (popB && !pop.contains(e.target) && !renderer.domElement.contains(e.target)) hidePop();
@@ -344,7 +364,7 @@
     const near = nearOf(B);
     if (!near.length) return hidePop();
     popB = B;
-    popTxt.textContent = "Overlaps " + near.length + " object" + (near.length > 1 ? "s" : "");
+    popTxt.textContent = "Overlaps " + near.length + " object" + (near.length > 1 ? "s" : "") + ":";
     pop.style.display = "flex";
   };
 

@@ -332,16 +332,19 @@
     popB = null;
   };
   popX.onclick = hidePop;
-  popCut.onclick = () => {
+  popCut.onclick = async () => {
     const B = popB;
     hidePop();
     if (!B || !B.parent) return;
+    if (await doCarve(B)) return; // clean layered cut first
+    const why1 = carveWhy;
     try {
       if (window.cadBoolMany && window.cadBoolMany(B, nearOf(B), "cut")) return;
     } catch (e) {
-      toast("3D cut failed (" + (e.message || e) + "). Trying the simple cut.");
+      toast("Couldn't cut. Layer cut: " + why1 + ". 3D cut: " + (e.message || e), false);
+      return;
     }
-    doCarve(B);
+    toast("Couldn't cut: " + why1, false);
   };
   popJoin.onclick = () => {
     hidePop();
@@ -361,16 +364,21 @@
     pop.style.display = "flex";
   };
 
+  let carveWhy = "";
   function doCarve(B) {
     const near = nearOf(B);
-    if (!near.length) return toast("Nothing to cut: no other solid overlaps this shape.", false);
-    loadPC()
+    if (!near.length) {
+      carveWhy = "no other solid overlaps this shape";
+      return Promise.resolve(false);
+    }
+    return loadPC()
       .then((pc) => {
         let LB;
         try {
           LB = layersOf(B);
         } catch (e) {
-          return toast("Carve not applied (" + (e.message || e) + ")");
+          carveWhy = "cut shape unreadable: " + (e.message || e);
+          return false;
         }
         const ops = [];
         near.forEach((A) => {
@@ -378,31 +386,29 @@
             const res = subtractLayers(pc, layersOf(A), LB);
             if (res) ops.push(makeOp(A, res));
           } catch (e) {
-            toast("Couldn't carve " + (A.userData.name || "an object") + " (" + (e.message || e) + ")");
+            carveWhy = (A.userData.name || "object") + ": " + (e.message || e);
           }
         });
-        if (!ops.length) return toast("Cut found nothing to remove: the shapes may only touch, or the cut shape couldn't be read.", false);
-        // The pushed shape is used up: it disappears, leaving a clean cut (undo brings it back)
-        const extra = removePusher
-          ? {
-              redo() {
-                removeFromScene(B);
-                hideArrow();
-              },
-              undo() {
-                addToScene(B);
-              }
-            }
-          : null;
-        applyOps(
-          ops,
-          "Carved " +
-            ops.map((o) => o.A.userData.name || "object").join(", ") +
-            (removePusher ? " and removed the pushed shape" : " to follow the new shape"),
-          extra
-        );
+        if (!ops.length) {
+          carveWhy = carveWhy || "the shapes only touch";
+          return false;
+        }
+        const extra = {
+          redo() {
+            removeFromScene(B);
+            hideArrow();
+          },
+          undo() {
+            addToScene(B);
+          }
+        };
+        applyOps(ops, "Cut done. The extruded shape is gone. Undo brings it back.", extra);
+        return true;
       })
-      .catch((e) => toast("Carve needs the polygon-clipping library (" + (e.message || e) + ")"));
+      .catch((e) => {
+        carveWhy = "polygon library: " + (e.message || e);
+        return false;
+      });
   }
 
   // Typing a new size or height into the panel carves too

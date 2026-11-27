@@ -275,8 +275,11 @@
   r1.append(placeBtn, btn("Flip", flip, "#3a4150"));
   const r2 = document.createElement("div");
   r2.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  const r3 = document.createElement("div");
+  r3.style.cssText = "display:flex;gap:6px;margin:6px 0";
+  r3.append(btn("Upright", () => upright(), "#3a4150"));
   r2.append(btn("Set (cut hole)", setScrew, "#1f9d63"), btn("Delete", del, "#8a2f2f"));
-  body.append(r1, r2, note);
+  body.append(r1, r3, r2, note);
 
   function sync() {
     dIn.value = Math.round(toDisplay(P.d) * 100) / 100;
@@ -309,46 +312,248 @@
     placeBtn.style.background = "#2f8cff";
   }
   const hostEl = document.getElementById("view");
-  hostEl.addEventListener(
+  const V3 = THREE.Vector3;
+  const inView = (e) => e.target === hostEl || hostEl.contains(e.target) || e.target === renderer.domElement;
+  const drawing = () => tool === "line" || tool === "rect" || tool === "circle";
+
+  // select an existing screw and load its size into the panel
+  function pick(m) {
+    cur = m;
+    const p = m.userData.screw.p;
+    if (p) {
+      Object.assign(P, p);
+      typeSel.value = P.type;
+      sizeSel.value = SIZES[P.size] ? P.size : "custom";
+      sync();
+    }
+    box.style.display = "block";
+    open.classList.add("active");
+  }
+  function place(point, n) {
+    const s = make(point, n);
+    perform({
+      redo() {
+        addToScene(s);
+      },
+      undo() {
+        removeFromScene(s);
+      }
+    });
+    pick(s);
+    stopPlacing();
+    say(
+      Math.abs(n.y) > 0.99
+        ? "Screw placed. Drag the screw to move it, drag the two rings to tilt it, then press Set to cut the hole."
+        : "Screw placed. Drag the rings to tilt it. Holes are cut for upright screws (use Upright).",
+      true
+    );
+  }
+
+  let drag = null;
+  // ---- rotation rings: two half circles (180 degrees each) ----
+  const ringMat = (c) => new THREE.MeshBasicMaterial({ color: c, depthTest: false, transparent: true, opacity: 0.9 });
+  const mkRing = (c, flat) => {
+    const g = new THREE.TorusGeometry(1, 0.035, 8, 64, Math.PI);
+    if (!flat) g.rotateY(Math.PI / 2);
+    const r = new THREE.Mesh(g, ringMat(c));
+    r.renderOrder = 999;
+    r.visible = false;
+    r.userData.noSelect = true;
+    return r;
+  };
+  const ringA = mkRing(0xff5a5a, true); // swings sideways, turns about the world Z axis
+  const ringB = mkRing(0x4f9dff, false); // swings front/back, turns about the world X axis
+  ringA.userData.axis = new V3(0, 0, 1);
+  ringA.userData.u = new V3(1, 0, 0);
+  ringA.userData.v = new V3(0, 1, 0);
+  ringB.userData.axis = new V3(1, 0, 0);
+  ringB.userData.u = new V3(0, 1, 0);
+  ringB.userData.v = new V3(0, 0, 1);
+  scene.add(ringA, ringB);
+  (function loop() {
+    const on = cur && cur.parent && box.style.display !== "none" && cur.visible !== false;
+    [ringA, ringB].forEach((r) => {
+      r.visible = !!on;
+      if (on) {
+        r.position.copy(cur.position);
+        const R = Math.max(P.L, 1.2) * 0.9;
+        r.scale.setScalar(R);
+        r.material.opacity = drag && drag.ring === r ? 1 : 0.8;
+      }
+    });
+    requestAnimationFrame(loop);
+  })();
+
+  const tmp = new V3();
+  function surfacePoint(e, ignore) {
+    setRay(e);
+    const targets = shapes.filter((x) => x !== ignore && x.visible !== false && !x.userData.screw && !x.userData.isLine);
+    const hit = raycaster.intersectObjects(targets, false)[0];
+    if (hit) {
+      const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new V3(0, 1, 0);
+      if (n.dot(raycaster.ray.direction) > 0) n.negate();
+      return { point: hit.point.clone(), n };
+    }
+    const g = typeof ground !== "undefined" ? raycaster.intersectObject(ground)[0] : null;
+    if (g) return { point: g.point.clone(), n: new V3(0, 1, 0) };
+    const pl = new THREE.Plane(new V3(0, 1, 0), 0);
+    return raycaster.ray.intersectPlane(pl, tmp) ? { point: tmp.clone(), n: new V3(0, 1, 0) } : null;
+  }
+  function ringAngle(r, e) {
+    setRay(e);
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(r.userData.axis, cur.position);
+    if (!raycaster.ray.intersectPlane(pl, tmp)) return null;
+    tmp.sub(cur.position);
+    return Math.atan2(tmp.dot(r.userData.v), tmp.dot(r.userData.u));
+  }
+  function setN(m) {
+    m.userData.screw.n.set(0, 1, 0).applyQuaternion(m.quaternion).normalize();
+    m.updateMatrixWorld(true);
+  }
+  function startDrag(e) {
+    const rings = [ringA, ringB].filter((r) => r.visible);
+    setRay(e);
+    const rh = rings.length ? raycaster.intersectObjects(rings, false)[0] : null;
+    if (rh) {
+      const a = ringAngle(rh.object, e);
+      if (a === null) return false;
+      drag = { kind: "rot", ring: rh.object, last: a, q0: cur.quaternion.clone() };
+      return true;
+    }
+    const sh = shapes.filter((x) => x.userData.screw && x.visible !== false);
+    const h = raycaster.intersectObjects(sh, false)[0];
+    if (h) {
+      if (h.object !== cur) pick(h.object);
+      drag = { kind: "move", p0: cur.position.clone(), grab: null };
+      const sp = surfacePoint(e, cur);
+      drag.grab = sp ? cur.position.clone().sub(sp.point) : new V3();
+      return true;
+    }
+    return false;
+  }
+  let swallowUp = false;
+  addEventListener(
     "pointerdown",
     (e) => {
-      if (!placing || (e.pointerType === "mouse" && e.button !== 0)) return;
-      setRay(e);
-      const targets = shapes.filter((s) => s.visible !== false && !s.userData.screw && !s.userData.isLine);
-      const hit = raycaster.intersectObjects(targets, false)[0];
+      try {
+        if (!inView(e) || (e.pointerType === "mouse" && e.button !== 0)) return;
+        if (placing) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          swallowUp = true;
+          const sp = surfacePoint(e, null);
+          if (!sp) return say("Tap on the grid or an object's surface.", false);
+          place(sp.point, sp.n);
+          return;
+        }
+        if (drawing() || box.style.display === "none" && !shapes.some((x) => x.userData.screw)) return;
+        if (box.style.display === "none") {
+          // tapping a screw while the panel is closed reselects it
+          setRay(e);
+          const h = raycaster.intersectObjects(shapes.filter((x) => x.userData.screw && x.visible !== false), false)[0];
+          if (!h) return;
+          pick(h.object);
+        }
+        if (startDrag(e)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          swallowUp = true;
+        }
+      } catch (err) {
+        say("Screw error: " + (err.message || err), false);
+      }
+    },
+    true
+  );
+  addEventListener(
+    "pointermove",
+    (e) => {
+      if (!drag) return;
       e.stopImmediatePropagation();
-      if (!hit || !hit.face) return say("Tap on an object's surface.", false);
-      const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
-      if (n.dot(raycaster.ray.direction) > 0) n.negate();
-      const s = make(hit.point, n);
-      perform({
+      try {
+        if (drag.kind === "rot") {
+          const a = ringAngle(drag.ring, e);
+          if (a === null) return;
+          let d = a - drag.last;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          drag.last = a;
+          cur.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(drag.ring.userData.axis, d));
+          setN(cur);
+        } else {
+          const sp = surfacePoint(e, cur);
+          if (sp) {
+            cur.position.copy(sp.point.add(drag.grab));
+            if (cur.position.y < 0) cur.position.y = 0;
+            cur.updateMatrixWorld(true);
+          }
+        }
+      } catch (err) {
+        say("Screw error: " + (err.message || err), false);
+      }
+    },
+    true
+  );
+  const endDrag = (e) => {
+    if (swallowUp) {
+      e.stopImmediatePropagation();
+      swallowUp = false;
+    }
+    if (!drag) return;
+    const d = drag,
+      m = cur;
+    drag = null;
+    if (d.kind === "rot") {
+      const q1 = m.quaternion.clone(),
+        q0 = d.q0;
+      if (q1.angleTo(q0) < 1e-4) return;
+      undoStack.push({
         redo() {
-          addToScene(s);
+          m.quaternion.copy(q1);
+          setN(m);
         },
         undo() {
-          removeFromScene(s);
+          m.quaternion.copy(q0);
+          setN(m);
         }
       });
-      cur = s;
-      stopPlacing();
-      box.style.display = "block";
-      open.classList.add("active");
-      say(
-        Math.abs(n.y) > 0.99
-          ? "Screw placed. Change size or length, then press Set to cut the hole."
-          : "Screw placed. Holes can only be cut for screws pointing straight up or down for now.",
-        true
-      );
-    },
-    true
-  );
-  hostEl.addEventListener(
-    "pointerup",
-    (e) => {
-      if (placing) e.stopImmediatePropagation();
-    },
-    true
-  );
+    } else {
+      const p1 = m.position.clone(),
+        p0 = d.p0;
+      if (p1.distanceTo(p0) < 1e-4) return;
+      undoStack.push({
+        redo() {
+          m.position.copy(p1);
+          m.updateMatrixWorld(true);
+        },
+        undo() {
+          m.position.copy(p0);
+          m.updateMatrixWorld(true);
+        }
+      });
+    }
+    redoStack.length = 0;
+  };
+  addEventListener("pointerup", endDrag, true);
+  addEventListener("pointercancel", endDrag, true);
+
+  function upright() {
+    if (!cur) return say("Place a screw first.", false);
+    const m = cur,
+      q0 = m.quaternion.clone(),
+      n = new V3(0, m.userData.screw.n.y >= 0 ? 1 : -1, 0),
+      q1 = new THREE.Quaternion().setFromUnitVectors(new V3(0, 1, 0), n);
+    perform({
+      redo() {
+        m.quaternion.copy(q1);
+        setN(m);
+      },
+      undo() {
+        m.quaternion.copy(q0);
+        setN(m);
+      }
+    });
+  }
 
   function flip() {
     if (!cur) return say("Place a screw first.", false);

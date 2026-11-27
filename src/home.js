@@ -386,6 +386,35 @@
     });
   }
 
+  function confirmBox(message) {
+    return new Promise((res) => {
+      const w = document.createElement("div");
+      w.style.cssText = "position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px";
+      const b = document.createElement("div");
+      b.style.cssText =
+        "width:min(360px,100%);background:#1c2029;border:1px solid #3a4150;border-radius:18px;padding:18px;color:#fff;font:15px -apple-system,sans-serif;text-align:center";
+      const t = document.createElement("div");
+      t.textContent = message;
+      t.style.cssText = "font-weight:600;line-height:1.4;margin-bottom:16px";
+      const r = document.createElement("div");
+      r.style.cssText = "display:flex;gap:10px";
+      const mk = (label, bg, v) => {
+        const x = document.createElement("button");
+        x.textContent = label;
+        x.style.cssText = "flex:1;height:44px;border:none;border-radius:12px;color:#fff;font-size:16px;font-weight:600;background:" + bg;
+        x.onclick = () => {
+          w.remove();
+          res(v);
+        };
+        return x;
+      };
+      r.append(mk("No", "#3a4150", false), mk("Yes", "#d64545", true));
+      b.append(t, r);
+      w.appendChild(b);
+      document.body.appendChild(w);
+    });
+  }
+
   // ------------------------------------------------------------ home page
   const css = document.createElement("style");
   css.textContent = `
@@ -540,8 +569,8 @@
           renderList();
         }),
         mk("Delete", "del", async () => {
-          const ok = await ask('Type DELETE to remove "' + p.name + '"', "");
-          if (ok !== "DELETE") return;
+          const ok = await confirmBox('Are you sure you want to delete "' + p.name + '"? This can\'t be undone.');
+          if (!ok) return;
           await dbDel(p.id);
           if (cur && cur.id === p.id) cur = null;
           renderList();

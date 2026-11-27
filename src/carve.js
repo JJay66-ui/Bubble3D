@@ -752,6 +752,60 @@
       });
       return;
     }
+    // Top or bottom face of a prism: pushing in carves a slab off that face
+    if (d < 0 && Math.abs(f.n.y) > 0.95) {
+      try {
+        const T = window.cadTopo(A),
+          kk = (v) => Math.round(v.x * 1e3) + "," + Math.round(v.z * 1e3),
+          cnt = new Map();
+        let fy = 0;
+        f.tris.forEach((j) => {
+          const t = T.tris[j];
+          fy = t.v[0].y;
+          for (let e = 0; e < 3; e++) {
+            const a = t.v[e],
+              b = t.v[(e + 1) % 3],
+              ka = kk(a),
+              kb = kk(b),
+              key = ka < kb ? ka + "|" + kb : kb + "|" + ka,
+              r = cnt.get(key);
+            if (r) r.n++;
+            else cnt.set(key, { n: 1, a, b, ka, kb });
+          }
+        });
+        const nxt = new Map();
+        let first = null;
+        cnt.forEach((r) => {
+          if (r.n !== 1) return;
+          first = first || r;
+          [r.ka, r.kb].forEach((q) => (nxt.has(q) ? nxt.get(q).push(r) : nxt.set(q, [r])));
+        });
+        if (!first) throw new Error("no outline");
+        const ring = [[first.a.x, first.a.z]];
+        let cu = first.kb,
+          pr = first,
+          g = 0;
+        while (cu !== first.ka && g++ < cnt.size + 2) {
+          const r = (nxt.get(cu) || []).find((q) => q !== pr);
+          if (!r) break;
+          const v2 = r.ka === cu ? r.a : r.b;
+          ring.push([v2.x, v2.z]);
+          cu = r.ka === cu ? r.kb : r.ka;
+          pr = r;
+        }
+        if (ring.length < 3) throw new Error("bad outline");
+        const pc = await loadPC(),
+          LA = layersOf(A),
+          up = f.n.y > 0,
+          cutter = [{ mp: [[ring]], y0: up ? fy + d : fy, y1: up ? fy : fy - d }],
+          res = subtractLayers(pc, LA, cutter);
+        if (!res) return toast("Nothing changed");
+        applyOps([makeOp(A, res)], "Pushed the face in", null);
+        return;
+      } catch (e) {
+        return toast("Couldn't push this face in (" + (e.message || e) + ")");
+      }
+    }
     // Other flat faces: pulling out adds a new solid on the face
     if (d > 0 && window.cadFaceExtrude) return window.cadFaceExtrude(d);
     toast("Pushing in works on boxes, sheets, sketch shapes and carved shapes. Other shapes can only be pulled out.");

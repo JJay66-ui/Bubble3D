@@ -35,6 +35,7 @@
 
   function target() {
     if (typeof selected !== "undefined" && selected && !selected.userData.isLine && selected.parent) return selected;
+    if (typeof moveObj !== "undefined" && moveObj && !moveObj.userData.isLine && moveObj.parent) return moveObj;
     const f = window.cadSelFaces ? window.cadSelFaces()[0] : null;
     return f ? f.mesh : null;
   }
@@ -72,6 +73,7 @@
       }
     });
     note.textContent = "Moved " + d + " " + UNITS[unitIndex].name;
+    if (typeof showArrow === "function") showArrow(m);
   }
   const mv = (sx, sz) => () => {
     const { f, r } = dirs();
@@ -96,10 +98,111 @@
   lift.textContent = "⬆ up  ⬇ down  (height)";
   wrap.insertBefore(lift, note);
 
+
+  // ---------- Drag arrows: grab one and slide the shape along that direction ----------
+  const el = renderer.domElement;
+  const gz = new THREE.Group();
+  const AX = [
+    { v: new THREE.Vector3(1, 0, 0), name: "left / right" },
+    { v: new THREE.Vector3(0, 0, 1), name: "up / down" },
+    { v: new THREE.Vector3(0, 1, 0), name: "height" }
+  ];
+  const gmat = new THREE.MeshBasicMaterial({ color: 0x3ddc84, depthTest: false });
+  const gsh = new THREE.MeshBasicMaterial({ color: 0xcfd6e3, depthTest: false });
+  AX.forEach((a, i) => {
+    const g = new THREE.Group();
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5, 10), gsh);
+    const c1 = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.9, 16), gmat);
+    const c2 = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.9, 16), gmat);
+    c1.position.y = 2.95;
+    c2.position.y = -2.95;
+    c2.rotation.x = Math.PI;
+    g.add(shaft, c1, c2);
+    g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), a.v);
+    g.children.forEach((c) => (c.renderOrder = 22));
+    g.userData.ax = i;
+    gz.add(g);
+  });
+  gz.visible = false;
+  scene.add(gz);
+  let gd = null;
+  const scr = (v) => {
+    const p = v.clone().project(camera);
+    return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight };
+  };
+  addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!gz.visible || e.target !== el || (e.pointerType === "mouse" && e.button !== 0)) return;
+      setRay(e);
+      const hit = raycaster.intersectObjects(gz.children, true)[0];
+      if (!hit) return;
+      let o = hit.object;
+      while (o.parent && o.parent !== gz) o = o.parent;
+      const m = target();
+      if (!m) return;
+      const ax = AX[o.userData.ax].v,
+        a = scr(gz.position),
+        b = scr(gz.position.clone().add(ax));
+      gd = { id: e.pointerId, m, ax, from: m.position.clone(), x: e.clientX, y: e.clientY, sx: b.x - a.x, sy: b.y - a.y, d: 0 };
+      el.setPointerCapture(e.pointerId);
+      e.stopImmediatePropagation();
+    },
+    true
+  );
+  addEventListener(
+    "pointermove",
+    (e) => {
+      if (!gd || e.pointerId !== gd.id) return;
+      const len2 = gd.sx * gd.sx + gd.sy * gd.sy || 1;
+      let d = ((e.clientX - gd.x) * gd.sx + (e.clientY - gd.y) * gd.sy) / len2;
+      d = Math.round(d * 4) / 4;
+      const to = gd.from.clone().addScaledVector(gd.ax, d);
+      const lo = new THREE.Box3().setFromObject(gd.m).min.y + (to.y - gd.m.position.y);
+      if (lo < -0.005) to.y -= lo; // the plate is zero
+      gd.m.position.copy(to);
+      gd.m.updateMatrixWorld(true);
+      gd.d = d;
+      if (typeof showMeasure === "function") showMeasure("Moved: " + fmt(d));
+      e.stopImmediatePropagation();
+    },
+    true
+  );
+  const gend = (e) => {
+    if (!gd || e.pointerId !== gd.id) return;
+    const m = gd.m,
+      from = gd.from,
+      to = m.position.clone();
+    gd = null;
+    if (typeof hideMeasure === "function") hideMeasure();
+    e.stopImmediatePropagation();
+    if (from.distanceTo(to) < 1e-6) return;
+    undoStack.push({
+      redo() {
+        m.position.copy(to);
+        m.updateMatrixWorld(true);
+      },
+      undo() {
+        m.position.copy(from);
+        m.updateMatrixWorld(true);
+      }
+    });
+    redoStack.length = 0;
+  };
+  addEventListener("pointerup", gend, true);
+  addEventListener("pointercancel", gend, true);
+
   (function frame() {
     requestAnimationFrame(frame);
     const show = typeof tool !== "undefined" && tool === "move";
     wrap.style.display = show ? "block" : "none";
+    const tm = show ? target() : null;
+    gz.visible = !!tm;
+    if (tm && !gd) {
+      const bb = new THREE.Box3().setFromObject(tm);
+      gz.position.copy(bb.getCenter(new THREE.Vector3()));
+    }
+    if (typeof arrow !== "undefined" && show) arrow.visible = false; // the big up arrow is replaced by these
     if (show) {
       unit.textContent = UNITS[unitIndex].name;
       if (!target() && !note.textContent.startsWith("Moved")) note.textContent = "Tap a shape first.";

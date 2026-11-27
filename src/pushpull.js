@@ -476,6 +476,32 @@
     return done;
   };
 
+  // Closed triangle mesh -> kernel solid (for shapes that aren't a simple prism)
+  function meshSolid(k, m) {
+    const T = window.cadTopo(m);
+    const F = [];
+    const tmp1 = new THREE.Vector3(),
+      tmp2 = new THREE.Vector3();
+    let hi = -Infinity,
+      lo = Infinity;
+    T.tris.forEach((t) => {
+      if (t.face === -2) return;
+      let [a, b, c] = t.v;
+      tmp1.subVectors(b, a);
+      tmp2.subVectors(c, a);
+      if (tmp1.cross(tmp2).dot(t.n) < 0) [b, c] = [c, b];
+      [a, b, c].forEach((p) => ((hi = Math.max(hi, p.y)), (lo = Math.min(lo, p.y))));
+      const A = [a.x, -a.z, a.y],
+        B = [b.x, -b.z, b.y],
+        C = [c.x, -c.z, c.y];
+      F.push(k.buildTriFace(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2]));
+    });
+    const sew = typeof k.sewAndSolidify === "function" ? k.sewAndSolidify(F, 1e-5) : k.buildSolidFromFaces(F);
+    if (!sew) throw new Error("couldn't rebuild the solid from the mesh");
+    if (k.getVolume && Math.abs(k.getVolume(sew)) < 1e-6) throw new Error("rebuilt solid is empty");
+    return { s: sew, H: hi - lo };
+  }
+
   // Round hole in ANY direction (with optional thread grooves) through upright prisms and boxes.
   // center = where the screw touches the surface, dirIn = unit vector pointing into the object,
   // r = core radius, depth = hole length, grooves = [{s0, s1, r}] distances along dirIn.
@@ -493,13 +519,16 @@
     let done = 0;
     hosts.forEach((m) => {
       try {
-        const pr = prismAnyAxis(m, "y");
-        if (!pr) {
-          window.cadAxisHoleWhy = (m.userData.name || "object") + " isn't an upright straight prism";
-          return;
+        let pr = prismAnyAxis(m, "y"),
+          host;
+        if (pr) host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
+        else {
+          // shapes that already have holes or odd outlines: rebuild the solid from the mesh itself
+          const ms = step("solid from mesh", () => meshSolid(k, m));
+          host = ms.s;
+          pr = { lo: 0, H: ms.H };
         }
         const O = (p) => [p.x, -p.z, p.y - pr.lo]; // app point -> kernel point (base of the prism at 0)
-        const host = step("host solid", () => prismFromPoints(k, pr.pts, pr.H));
         const cyl = (rad, s0, s1) =>
           step("hole solid", () => {
             const N = 36,

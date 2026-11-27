@@ -800,6 +800,29 @@
     },
     true
   );
+  // Slight "resistance" when a pushed face reaches the surface of another object (flush point)
+  const FLUSH_Z = 0.35;
+  function flushStops() {
+    if (!cur || !cur.f || !cur.f.mesh) return [];
+    const n = cur.n,
+      ax = ["x", "y", "z"].reduce((m, k) => (Math.abs(n[k]) > Math.abs(n[m]) ? k : m), "x"),
+      sg = n[ax] >= 0 ? 1 : -1,
+      p = cur.c[ax],
+      me = new THREE.Box3().setFromObject(cur.f.mesh),
+      o1 = ["x", "y", "z"].filter((k) => k !== ax),
+      res = [];
+    shapes.forEach((s) => {
+      if (s === cur.f.mesh || s.visible === false || (s.userData && s.userData.screw)) return;
+      const b = new THREE.Box3().setFromObject(s);
+      if (b.isEmpty() || o1.some((k) => b.max[k] < me.min[k] + 0.01 || b.min[k] > me.max[k] - 0.01)) return;
+      [b.min[ax], b.max[ax]].forEach((q) => {
+        const t = (q - p) * sg;
+        if (Math.abs(t) > 0.02) res.push(t);
+      });
+    });
+    return res;
+  }
+
   addEventListener(
     "pointermove",
     (e) => {
@@ -807,9 +830,28 @@
       const len2 = fdrag.sx * fdrag.sx + fdrag.sy * fdrag.sy || 1;
       const d0 = ((e.clientX - fdrag.x) * fdrag.sx + (e.clientY - fdrag.y) * fdrag.sy) / len2;
       if (Math.abs(d0) > 0.05) fdrag.moved = true;
-      fdrag.d = fdrag.base && !fdrag.moved ? fdrag.base : Math.round((fdrag.base + d0) * 4) / 4;
+      let dd = fdrag.base && !fdrag.moved ? fdrag.base : Math.round((fdrag.base + d0) * 4) / 4;
+      const fl = flushStops();
+      let held = false;
+      if (!(fdrag.base && !fdrag.moved) && fl.length) {
+        const sg = dd < 0 ? -1 : 1;
+        let a = Math.abs(dd),
+          out = a;
+        fl.filter((s) => s * sg > 0.01)
+          .map((s) => Math.abs(s))
+          .sort((x, y) => x - y)
+          .forEach((s) => {
+            if (a >= s && a <= s + FLUSH_Z) {
+              out = s + (out - a); // stuck at the flush plane
+              held = true;
+              out = s;
+            } else if (a > s + FLUSH_Z) out = a - FLUSH_Z;
+          });
+        dd = sg * out;
+      }
+      fdrag.d = dd;
       showPreview(fdrag.d);
-      showMeasure((fdrag.d >= 0 ? "Push out: " : "Push in: ") + fmt(Math.abs(fdrag.d)));
+      showMeasure(held ? "Flush with the other object" : (fdrag.d >= 0 ? "Push out: " : "Push in: ") + fmt(Math.abs(fdrag.d)));
       e.stopImmediatePropagation();
     },
     true

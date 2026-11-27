@@ -361,6 +361,7 @@
     if (!(B.userData.height > 0.05 || B.userData.imported || B.userData.occtG)) return hidePop();
     const near = nearOf(B);
     if (!near.length) return hidePop();
+    if (typeof ppClose === "function") ppClose();
     popB = B;
     popTxt.textContent = "Extruded into " + near.length + " object" + (near.length > 1 ? "s" : "") + ":";
     pop.style.display = "flex";
@@ -1096,10 +1097,17 @@
     m.userData.edges = eg;
     return m;
   }
+  const selPanel = () => document.querySelector('[data-dragkey="selpanel"]');
   const ppClose = () => {
     pp.style.display = "none";
     ppPending = null;
+    const sp = selPanel();
+    if (sp && sp.dataset.hiddenByPop) {
+      sp.style.visibility = "";
+      delete sp.dataset.hiddenByPop;
+    }
   };
+  ["pointerdown", "pointerup", "click"].forEach((t) => pp.addEventListener(t, (e) => e.stopPropagation()));
   async function ppGo(keep) {
     const P = ppPending;
     ppClose();
@@ -1131,6 +1139,12 @@
   }
   function askPulled(f, d) {
     ppPending = { f, d };
+    hidePop(); // never two pop-ups at once
+    const sp = selPanel();
+    if (sp && sp.style.visibility !== "hidden") {
+      sp.style.visibility = "hidden"; // the Extrude panel steps aside while you choose
+      sp.dataset.hiddenByPop = "1";
+    }
     pp.style.display = "flex";
   }
   ppKeep.onclick = () => ppGo(true);

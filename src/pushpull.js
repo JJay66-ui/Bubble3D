@@ -847,6 +847,39 @@
     };
   }
 
+
+  // Cut tool: tap an object, then tap the SAME object again to cut it out of everything it overlaps
+  window.addEventListener(
+    "pointerdown",
+    (e) => {
+      try {
+        if (tool !== "cut" || !cutTool || e.target !== renderer.domElement) return;
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        setRay(e);
+        const hit = raycaster.intersectObjects(shapes.filter((s) => s.visible !== false), false)[0];
+        if (!hit || hit.object !== cutTool) return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        const B = cutTool,
+          bb = new THREE.Box3().setFromObject(B).expandByScalar(-0.01),
+          hosts = shapes.filter(
+            (o) => o !== B && o.visible !== false && !o.userData.screw && new THREE.Box3().setFromObject(o).intersectsBox(bb)
+          );
+        cutTool = null;
+        hideMeasure();
+        if (!hosts.length) return cadToast("Nothing to cut: this object doesn't overlap another one.", false);
+        try {
+          window.cadBoolMany(B, hosts, "cut");
+        } catch (err) {
+          cadToast("Couldn't cut (" + (err.message || err) + ")", false);
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+    },
+    true
+  );
+
   // OCCT is Z-up: app (x, y, z) = OCCT (x, z, -y)
   function solidOf(k, m) {
     const own =

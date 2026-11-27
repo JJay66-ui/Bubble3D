@@ -411,14 +411,18 @@
   // ---- Keep every flyout inside the page ----
   function fit(f) {
     if (!f.classList.contains("open")) return;
-    f.style.maxHeight = innerHeight - 16 + "px";
-    f.style.overflowY = "auto";
-    const r = f.getBoundingClientRect();
-    let top = r.top, left = r.left;
-    if (r.bottom > innerHeight - 8) top -= r.bottom - (innerHeight - 8);
-    if (r.right > innerWidth - 8) left -= r.right - (innerWidth - 8);
-    f.style.top = Math.max(8, top) + "px";
-    f.style.left = Math.max(8, left) + "px";
+    // use layout values (not animated rects) so the flyout keeps its normal gap from the bar
+    const h = f.offsetHeight, w = f.offsetWidth;
+    let top = f.offsetTop, left = f.offsetLeft;
+    if (h > innerHeight - 16) {
+      f.style.maxHeight = innerHeight - 16 + "px";
+      f.style.overflowY = "auto";
+    }
+    if (top + h > innerHeight - 8) top = innerHeight - 8 - h;
+    if (left + w > innerWidth - 8) left = innerWidth - 8 - w;
+    top = Math.max(8, top);
+    if (top !== f.offsetTop) f.style.top = top + "px";
+    if (left !== f.offsetLeft) f.style.left = left + "px";
   }
   if (typeof flyouts !== "undefined") {
     const mo = new MutationObserver((l) => l.forEach((m) => fit(m.target)));

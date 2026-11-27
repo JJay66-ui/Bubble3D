@@ -219,7 +219,7 @@
   function makeLine3D(a, b) {
     const l = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]),
-      new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false })
+      new THREE.LineBasicMaterial({ color: 0xffd23f, depthTest: false })
     );
     l.renderOrder = 5;
     l.userData.isLine = true;
@@ -385,7 +385,7 @@
   }
   function showPrev(a, p) {
     clearPrev();
-    const mat = new THREE.LineBasicMaterial({ color: 0x2f8cff, depthTest: false });
+    const mat = new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false });
     if (sk.tool === "line") prev = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, p]), mat);
     else if (sk.tool === "circle") prev = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(circlePts(a, p)), mat);
     else prev = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(corners(a, p)), mat);
